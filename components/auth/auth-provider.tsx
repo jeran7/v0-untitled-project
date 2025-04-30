@@ -668,16 +668,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         console.log("Signing in user:", email)
 
-        // Add special headers for production environment
-        const options = isProduction
-          ? {
-              auth: {
-                persistSession: true,
-                autoRefreshToken: true,
-                detectSessionInUrl: true,
-              },
-            }
-          : undefined
+        // Always use these options for better session persistence
+        const options = {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+        }
 
         const { data, error } = await supabase.auth.signInWithPassword(
           {
@@ -693,12 +691,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.log("Sign in successful:", data.user?.email)
 
-        // In production, add a small delay to ensure session is properly set
-        if (isProduction) {
-          await new Promise((resolve) => setTimeout(resolve, 500))
-        }
+        // Add a delay to ensure session is properly set
+        await new Promise((resolve) => setTimeout(resolve, 1000))
 
-        // Auth state listener will handle session update and navigation
+        // Manually set the session in state to ensure it's available
+        setState((prev) => ({
+          ...prev,
+          user: data.user,
+          session: data.session,
+          isLoading: false,
+        }))
+
+        // Auth state listener will handle full session update and navigation
         return { success: true }
       } catch (error: any) {
         console.error("Sign in error:", error)
@@ -713,7 +717,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState((prev) => ({ ...prev, isLoading: false }))
       }
     },
-    [toast, isProduction],
+    [toast],
   )
 
   // Sign in with Google OAuth

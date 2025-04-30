@@ -67,7 +67,7 @@ export function TradingViewChart({
     const initChart = async () => {
       try {
         // Import the library
-        const LightweightCharts = await import("lightweight-charts")
+        const { createChart } = await import("lightweight-charts")
 
         if (!chartContainerRef.current) return
 
@@ -117,14 +117,24 @@ export function TradingViewChart({
         }
 
         // Create the chart
-        const newChart = LightweightCharts.createChart(chartContainerRef.current, chartOptions)
+        const newChart = createChart(chartContainerRef.current, chartOptions)
 
         // Create a simple line series
-        const series = newChart.addAreaSeries({
+        const series = newChart.addLineSeries({
+          color: "rgba(76, 175, 80, 1)",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          priceFormat: {
+            type: "price",
+            precision: 2,
+            minMove: 0.01,
+          },
+          // Add area styling
+          lineType: 0,
           topColor: "rgba(76, 175, 80, 0.56)",
           bottomColor: "rgba(76, 175, 80, 0.04)",
-          lineColor: "rgba(76, 175, 80, 1)",
-          lineWidth: 2,
+          fillOpacity: 0.2,
         })
 
         // Set the data

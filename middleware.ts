@@ -77,6 +77,11 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(redirectUrl)
     }
 
+    // Add auth session to response headers for server components
+    if (session) {
+      response.headers.set("x-supabase-auth", "authenticated")
+    }
+
     // Allow the request to continue
     return response
   } catch (error) {

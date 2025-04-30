@@ -85,21 +85,23 @@ export function LoginForm() {
         console.log("Login successful, attempting redirect")
         setLoginAttempted(true)
 
-        // In production, use a short delay before redirect to ensure session is properly set
-        if (isProduction) {
-          console.log("Production environment detected, adding delay before redirect")
+        // Force a small delay to ensure session is properly set
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+
+        // Try both navigation methods for maximum compatibility
+        try {
+          console.log("Attempting router navigation")
+          router.push("/dashboard")
+
+          // Fallback to direct navigation after a short delay
           setTimeout(() => {
+            console.log("Fallback: direct navigation")
             window.location.href = "/dashboard"
           }, 1000)
-        } else {
-          // Try both navigation methods
-          try {
-            router.push("/dashboard")
-          } catch (navError) {
-            console.error("Router navigation failed:", navError)
-            // Fallback to direct navigation
-            window.location.href = "/dashboard"
-          }
+        } catch (navError) {
+          console.error("Router navigation failed:", navError)
+          // Fallback to direct navigation
+          window.location.href = "/dashboard"
         }
       } else if (result?.error) {
         console.error("Login error:", result.error)
