@@ -33,12 +33,21 @@ const publicRoutes = [
   "/auth/forgot-password",
   "/auth/reset-password",
   "/auth/callback",
+  "/auth/debug", // Add debug page to public routes
 ]
 
 export async function middleware(request: NextRequest) {
   try {
     // Create response to modify
     const response = NextResponse.next()
+
+    // Get the pathname from the URL
+    const { pathname } = request.nextUrl
+
+    // Skip middleware for debug page to avoid authentication issues
+    if (pathname.startsWith("/auth/debug")) {
+      return NextResponse.next()
+    }
 
     // Create a Supabase client configured for middleware
     const supabase = createMiddlewareClient(request, response)
@@ -47,9 +56,6 @@ export async function middleware(request: NextRequest) {
     const {
       data: { session },
     } = await supabase.auth.getSession()
-
-    // Get the pathname from the URL
-    const { pathname } = request.nextUrl
 
     // Check if the pathname starts with /auth
     const isAuthRoute = pathname.startsWith("/auth")

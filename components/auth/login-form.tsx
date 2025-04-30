@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Icons } from "@/components/ui/icons"
+import { DirectLogin } from "@/components/auth/direct-login"
 
 export function LoginForm() {
   const router = useRouter()
@@ -22,6 +23,7 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [loginAttempted, setLoginAttempted] = useState(false)
+  const [showDirectLogin, setShowDirectLogin] = useState(false)
   const [isProduction, setIsProduction] = useState(false)
 
   // Check if we're in production environment
@@ -106,13 +108,19 @@ export function LoginForm() {
       } else if (result?.error) {
         console.error("Login error:", result.error)
         setError(result.error)
+        // Show direct login option after a failed attempt
+        setShowDirectLogin(true)
       } else {
         console.error("Unexpected result format:", result)
         setError("An unexpected error occurred")
+        // Show direct login option after a failed attempt
+        setShowDirectLogin(true)
       }
     } catch (err) {
       console.error("Login exception:", err)
       setError("An unexpected error occurred. Please try again.")
+      // Show direct login option after a failed attempt
+      setShowDirectLogin(true)
     } finally {
       // Ensure loading state is reset
       setIsLoading(false)
@@ -216,6 +224,20 @@ export function LoginForm() {
               Continue to Dashboard
             </Button>
           )}
+
+          {/* Show direct login option */}
+          <div className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => setShowDirectLogin(!showDirectLogin)}
+            >
+              {showDirectLogin ? "Hide" : "Show"} Alternative Login Method
+            </Button>
+          </div>
+
+          {showDirectLogin && <DirectLogin />}
         </form>
       </CardContent>
       <CardFooter className="flex flex-col gap-4">
@@ -257,6 +279,12 @@ export function LoginForm() {
             Sign up
           </Link>
         </p>
+
+        <div className="text-center">
+          <Link href="/auth/debug" className="text-xs text-muted-foreground hover:underline">
+            Authentication Debug
+          </Link>
+        </div>
       </CardFooter>
     </Card>
   )

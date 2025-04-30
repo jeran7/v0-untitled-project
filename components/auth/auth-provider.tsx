@@ -666,7 +666,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState((prev) => ({ ...prev, isLoading: true, error: null }))
 
       try {
-        console.log("Signing in user:", email)
+        console.log("[Auth] Signing in user:", email)
+
+        // First, clear any existing session
+        await supabase.auth.signOut()
+        console.log("[Auth] Cleared existing session")
 
         // Always use these options for better session persistence
         const options = {
@@ -689,7 +693,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw error
         }
 
-        console.log("Sign in successful:", data.user?.email)
+        console.log("[Auth] Sign in successful:", data.user?.email)
+        console.log("[Auth] Session:", data.session ? "✓" : "✗")
 
         // Add a delay to ensure session is properly set
         await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -702,10 +707,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isLoading: false,
         }))
 
+        // Verify session was stored properly
+        const sessionCheck = await supabase.auth.getSession()
+        console.log("[Auth] Session verification:", sessionCheck.data.session ? "✓" : "✗")
+
         // Auth state listener will handle full session update and navigation
         return { success: true }
       } catch (error: any) {
-        console.error("Sign in error:", error)
+        console.error("[Auth] Sign in error:", error)
         setState((prev) => ({ ...prev, error: error.message, isLoading: false }))
         toast({
           title: "Sign in failed",
