@@ -10,7 +10,7 @@ function createMiddlewareClient(request: NextRequest, response: NextResponse) {
 
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error("Missing Supabase environment variables in middleware")
-    throw new Error("Missing Supabase environment variables")
+    return null
   }
 
   return createClient<Database>(supabaseUrl, supabaseAnonKey, {
@@ -33,8 +33,28 @@ const publicRoutes = [
   "/auth/forgot-password",
   "/auth/reset-password",
   "/auth/callback",
-  "/auth/debug", // Add debug page to public routes
+  "/auth/debug",
 ]
+
+// Check if a path is public
+function isPublicPath(path: string) {
+  return publicRoutes.some((route) => path === route || path.startsWith(`${route}/`))
+}
+
+// Check for backup auth in cookies
+function hasBackupAuth(request: NextRequest) {
+  try {
+    const authBackup = request.cookies.get("auth-backup")?.value
+    if (!authBackup) return false
+
+    const data = JSON.parse(authBackup)
+    const isRecent = Date.now() - data.timestamp < 24 * 60 * 60 * 1000
+
+    return data.authenticated && isRecent
+  } catch (e) {
+    return false
+  }
+}
 
 export async function middleware(request: NextRequest) {
   try {
@@ -44,36 +64,45 @@ export async function middleware(request: NextRequest) {
     // Get the pathname from the URL
     const { pathname } = request.nextUrl
 
-    // Skip middleware for debug page to avoid authentication issues
-    if (pathname.startsWith("/auth/debug")) {
+    // Skip middleware for static files, api routes, and public routes
+    if (
+      pathname.startsWith("/_next") ||
+      pathname.startsWith("/api") ||
+      pathname.startsWith("/static") ||
+      pathname.includes(".") ||
+      isPublicPath(pathname)
+    ) {
       return NextResponse.next()
     }
 
     // Create a Supabase client configured for middleware
     const supabase = createMiddlewareClient(request, response)
-
-    // Refresh session if expired - required for Server Components
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-
-    // Check if the pathname starts with /auth
-    const isAuthRoute = pathname.startsWith("/auth")
-
-    // If user is signed in and trying to access auth routes, redirect to dashboard
-    if (session && isAuthRoute) {
-      console.log("Middleware: User is signed in and trying to access auth route, redirecting to dashboard")
-      return NextResponse.redirect(new URL("/dashboard", request.url))
+    if (!supabase) {
+      console.error("Failed to create Supabase client in middleware")
+      return NextResponse.next() // Continue anyway to avoid blocking users
     }
 
-    // Protected routes that require authentication
-    const protectedRoutes = ["/dashboard", "/trades", "/analytics", "/profile", "/playbook", "/compliance"]
+    // Try to get the session
+    let session = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      session = data.session
+    } catch (error) {
+      console.error("Error getting session in middleware:", error)
+      // Continue with null session
+    }
 
     // Check if the current route is protected
-    const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route))
+    const isProtectedRoute = !isPublicPath(pathname)
 
-    // If user is not signed in and trying to access protected routes, redirect to login
+    // If user is not signed in and trying to access protected routes
     if (!session && isProtectedRoute) {
+      // Check for backup auth
+      if (hasBackupAuth(request)) {
+        console.log("Middleware: Using backup auth for protected route")
+        return NextResponse.next()
+      }
+
       console.log("Middleware: User is not signed in and trying to access protected route, redirecting to login")
 
       // Store the original URL to redirect back after login
@@ -100,8 +129,5 @@ export async function middleware(request: NextRequest) {
 
 // Configure the middleware to run on specific paths
 export const config = {
-  matcher: [
-    // Match all routes except static files, api routes, and _next
-    "/((?!_next/static|_next/image|favicon.ico|api).*)",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 }

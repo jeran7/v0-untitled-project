@@ -1,74 +1,41 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { useAuth } from "@/components/auth/auth-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, CheckCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Icons } from "@/components/ui/icons"
-import { DirectLogin } from "@/components/auth/direct-login"
+import { AuthService } from "@/lib/auth-service"
+import { supabase } from "@/lib/supabase/client"
 
 export function LoginForm() {
   const router = useRouter()
-  const { signIn, signInWithGoogle, signInWithGithub } = useAuth()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [loginAttempted, setLoginAttempted] = useState(false)
-  const [showDirectLogin, setShowDirectLogin] = useState(false)
-  const [isProduction, setIsProduction] = useState(false)
+  const [showBackupAuth, setShowBackupAuth] = useState(false)
 
-  // Check if we're in production environment
+  // Check for backup auth state on load
   useEffect(() => {
-    // Check if we're in production (deployed to Vercel)
-    const isVercelProduction =
-      window.location.hostname !== "localhost" && !window.location.hostname.includes("vercel.app")
-
-    setIsProduction(isVercelProduction)
-
-    if (isVercelProduction) {
-      console.log("Running in production environment")
+    const backupAuth = AuthService.getBackupAuthState()
+    if (backupAuth?.authenticated) {
+      setShowBackupAuth(true)
     }
   }, [])
-
-  // Safety timeout to prevent the button from being stuck in loading state
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout | null = null
-
-    if (isLoading) {
-      timeoutId = setTimeout(() => {
-        console.log("Safety timeout triggered - resetting loading state")
-        setIsLoading(false)
-      }, 10000) // 10 second timeout
-    }
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId)
-    }
-  }, [isLoading])
-
-  // Effect to handle successful login redirect
-  useEffect(() => {
-    if (loginAttempted && !isLoading && !error) {
-      console.log("Login successful, redirecting via effect")
-      // Force navigation to dashboard
-      window.location.href = "/dashboard"
-    }
-  }, [loginAttempted, isLoading, error])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setSuccess(null)
     setIsLoading(true)
-    setLoginAttempted(false)
 
     if (!email || !password) {
       setError("Please enter both email and password")
@@ -79,87 +46,84 @@ export function LoginForm() {
     try {
       console.log("Attempting to sign in with:", email)
 
-      // Direct approach with Supabase client
-      const result = await signIn(email, password)
-      console.log("Sign in result:", result)
+      const result = await AuthService.signIn(email, password)
 
-      if (result?.success) {
-        console.log("Login successful, attempting redirect")
-        setLoginAttempted(true)
+      if (result.success) {
+        setSuccess("Login successful! Redirecting...")
 
         // Force a small delay to ensure session is properly set
         await new Promise((resolve) => setTimeout(resolve, 1500))
 
-        // Try both navigation methods for maximum compatibility
-        try {
-          console.log("Attempting router navigation")
-          router.push("/dashboard")
-
-          // Fallback to direct navigation after a short delay
-          setTimeout(() => {
-            console.log("Fallback: direct navigation")
-            window.location.href = "/dashboard"
-          }, 1000)
-        } catch (navError) {
-          console.error("Router navigation failed:", navError)
-          // Fallback to direct navigation
-          window.location.href = "/dashboard"
-        }
-      } else if (result?.error) {
-        console.error("Login error:", result.error)
-        setError(result.error)
-        // Show direct login option after a failed attempt
-        setShowDirectLogin(true)
+        // Navigate to dashboard
+        window.location.href = "/dashboard"
       } else {
-        console.error("Unexpected result format:", result)
-        setError("An unexpected error occurred")
-        // Show direct login option after a failed attempt
-        setShowDirectLogin(true)
+        setError(result.error || "Login failed")
+        setShowBackupAuth(true)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login exception:", err)
       setError("An unexpected error occurred. Please try again.")
-      // Show direct login option after a failed attempt
-      setShowDirectLogin(true)
+      setShowBackupAuth(true)
     } finally {
-      // Ensure loading state is reset
       setIsLoading(false)
     }
   }
 
-  const handleGoogleSignIn = () => {
+  const handleGoogleSignIn = async () => {
     setIsLoading(true)
     try {
-      signInWithGoogle().catch((err) => {
-        console.error("Google sign in error:", err)
-        setIsLoading(false)
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
       })
+
+      if (error) throw error
 
       // Set a timeout to reset loading state if OAuth redirect doesn't happen
       setTimeout(() => {
         setIsLoading(false)
       }, 5000)
-    } catch (err) {
+    } catch (err: any) {
       console.error("Google sign in error:", err)
+      setError(err.message)
       setIsLoading(false)
     }
   }
 
-  const handleGithubSignIn = () => {
+  const handleGithubSignIn = async () => {
     setIsLoading(true)
     try {
-      signInWithGithub().catch((err) => {
-        console.error("GitHub sign in error:", err)
-        setIsLoading(false)
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
       })
+
+      if (error) throw error
 
       // Set a timeout to reset loading state if OAuth redirect doesn't happen
       setTimeout(() => {
         setIsLoading(false)
       }, 5000)
-    } catch (err) {
+    } catch (err: any) {
       console.error("GitHub sign in error:", err)
+      setError(err.message)
       setIsLoading(false)
+    }
+  }
+
+  const handleBackupAuth = () => {
+    const backupAuth = AuthService.getBackupAuthState()
+    if (backupAuth?.authenticated) {
+      setSuccess(`Using backup authentication for ${backupAuth.user}. Redirecting...`)
+      setTimeout(() => {
+        window.location.href = "/dashboard"
+      }, 1500)
+    } else {
+      setError("No valid backup authentication found")
     }
   }
 
@@ -177,6 +141,14 @@ export function LoginForm() {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+
+          {success && (
+            <Alert className="bg-green-500/20 text-green-700 border-green-500">
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -218,26 +190,24 @@ export function LoginForm() {
             )}
           </Button>
 
-          {/* Manual redirect button - only shows after login attempt */}
-          {loginAttempted && !isLoading && !error && (
-            <Button type="button" className="w-full mt-2" onClick={() => (window.location.href = "/dashboard")}>
-              Continue to Dashboard
-            </Button>
-          )}
-
-          {/* Show direct login option */}
-          <div className="pt-2">
+          {showBackupAuth && (
             <Button
               type="button"
               variant="outline"
-              className="w-full"
-              onClick={() => setShowDirectLogin(!showDirectLogin)}
+              className="w-full mt-2 border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20"
+              onClick={handleBackupAuth}
             >
-              {showDirectLogin ? "Hide" : "Show"} Alternative Login Method
+              Try Backup Authentication
             </Button>
-          </div>
+          )}
 
-          {showDirectLogin && <DirectLogin />}
+          <div className="pt-2">
+            <Link href="/auth/debug">
+              <Button type="button" variant="link" className="w-full text-sm">
+                Authentication Debug
+              </Button>
+            </Link>
+          </div>
         </form>
       </CardContent>
       <CardFooter className="flex flex-col gap-4">
@@ -279,12 +249,6 @@ export function LoginForm() {
             Sign up
           </Link>
         </p>
-
-        <div className="text-center">
-          <Link href="/auth/debug" className="text-xs text-muted-foreground hover:underline">
-            Authentication Debug
-          </Link>
-        </div>
       </CardFooter>
     </Card>
   )

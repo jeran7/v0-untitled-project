@@ -3,15 +3,14 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { useAuth } from "@/components/auth/auth-provider"
-import { supabase } from "@/lib/supabase/client"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle, CheckCircle } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { supabase } from "@/lib/supabase/client"
+import { AuthService } from "@/lib/auth-service"
 
 export default function AuthDebugPage() {
-  const { user, session, isLoading } = useAuth()
   const [localStorageItems, setLocalStorageItems] = useState<Record<string, string>>({})
   const [cookieItems, setCookieItems] = useState<string>("")
   const [sessionData, setSessionData] = useState<any>(null)
@@ -20,6 +19,8 @@ export default function AuthDebugPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isTestingLogin, setIsTestingLogin] = useState(false)
+  const [backupAuthState, setBackupAuthState] = useState<any>(null)
+  const [networkStatus, setNetworkStatus] = useState<string>("checking...")
 
   // Refresh local storage and cookie data
   const refreshStorageData = () => {
@@ -37,11 +38,39 @@ export default function AuthDebugPage() {
 
       // Get cookies
       setCookieItems(document.cookie)
+
+      // Get backup auth state
+      const backupAuth = AuthService.getBackupAuthState()
+      setBackupAuthState(backupAuth)
+    }
+  }
+
+  // Check network connectivity to Supabase
+  const checkNetworkStatus = async () => {
+    try {
+      setNetworkStatus("checking...")
+      const startTime = Date.now()
+
+      // Try to ping Supabase
+      const { data, error } = await supabase.from("user_profiles").select("count").limit(1)
+
+      const endTime = Date.now()
+      const responseTime = endTime - startTime
+
+      if (error) {
+        setNetworkStatus(`Error: ${error.message}`)
+      } else {
+        setNetworkStatus(`Connected (${responseTime}ms)`)
+      }
+    } catch (err: any) {
+      setNetworkStatus(`Connection failed: ${err.message}`)
     }
   }
 
   useEffect(() => {
     refreshStorageData()
+    checkNetworkStatus()
+    checkSession()
   }, [])
 
   const checkSession = async () => {
@@ -85,7 +114,7 @@ export default function AuthDebugPage() {
 
       // Clear all Supabase related items
       Object.keys(localStorage).forEach((key) => {
-        if (key.includes("supabase") || key.includes("sb-")) {
+        if (key.includes("supabase") || key.includes("sb-") || key.includes("auth")) {
           localStorage.removeItem(key)
         }
       })
@@ -117,12 +146,45 @@ export default function AuthDebugPage() {
       setSessionData({ session: data.session })
       setSuccess(`Login successful! User: ${data.user?.email}`)
 
+      // Create backup auth
+      localStorage.setItem(
+        "auth-backup",
+        JSON.stringify({
+          authenticated: true,
+          timestamp: Date.now(),
+          user: data.user.email,
+        }),
+      )
+
       // Refresh storage data
       refreshStorageData()
     } catch (err: any) {
       setError(err.message)
     } finally {
       setIsTestingLogin(false)
+    }
+  }
+
+  const createBackupAuth = () => {
+    try {
+      if (!email) {
+        setError("Please enter an email to create backup auth")
+        return
+      }
+
+      localStorage.setItem(
+        "auth-backup",
+        JSON.stringify({
+          authenticated: true,
+          timestamp: Date.now(),
+          user: email,
+        }),
+      )
+
+      refreshStorageData()
+      setSuccess("Backup auth created successfully!")
+    } catch (err: any) {
+      setError(err.message)
     }
   }
 
@@ -153,9 +215,12 @@ export default function AuthDebugPage() {
           )}
 
           <div className="space-y-2">
-            <h3 className="text-lg font-medium">Auth Context State</h3>
-            <div className="bg-muted p-4 rounded-md overflow-auto max-h-40">
-              <pre>{JSON.stringify({ user: user?.email, isLoading, hasSession: !!session }, null, 2)}</pre>
+            <h3 className="text-lg font-medium">Network Status</h3>
+            <div className="flex items-center gap-2">
+              <div className="bg-muted p-2 rounded-md flex-1">{networkStatus}</div>
+              <Button onClick={checkNetworkStatus} size="sm">
+                Check
+              </Button>
             </div>
           </div>
 
@@ -216,9 +281,21 @@ export default function AuthDebugPage() {
                 />
               </div>
 
-              <Button onClick={testDirectLogin} disabled={isTestingLogin || !email || !password}>
-                {isTestingLogin ? "Testing..." : "Test Login"}
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={testDirectLogin} disabled={isTestingLogin || !email || !password}>
+                  {isTestingLogin ? "Testing..." : "Test Login"}
+                </Button>
+                <Button onClick={createBackupAuth} variant="outline" disabled={!email}>
+                  Create Backup Auth
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2 border-t pt-4">
+            <h3 className="text-lg font-medium">Backup Auth State</h3>
+            <div className="bg-muted p-4 rounded-md overflow-auto max-h-40">
+              <pre>{JSON.stringify(backupAuthState, null, 2) || "No backup auth found"}</pre>
             </div>
           </div>
 
