@@ -1,11 +1,34 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
+import { createClient } from "@supabase/supabase-js"
+import type { Database } from "@/types/database"
+
+// Create a Supabase client for middleware
+function createMiddlewareClient(request: NextRequest, response: NextResponse) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("Missing Supabase environment variables in middleware")
+    return null
+  }
+
+  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+    },
+    global: {
+      headers: {
+        "x-middleware-request": "true",
+      },
+    },
+  })
+}
 
 // List of public routes that don't require authentication
 const publicRoutes = [
   "/",
   "/auth/login",
-  "/auth/simplified-login",
   "/auth/register",
   "/auth/forgot-password",
   "/auth/reset-password",
@@ -18,17 +41,16 @@ function isPublicPath(path: string) {
   return publicRoutes.some((route) => path === route || path.startsWith(`${route}/`))
 }
 
-// Check for backup auth in cookies or localStorage
+// Check for backup auth in cookies
 function hasBackupAuth(request: NextRequest) {
   try {
-    // We can't access localStorage in middleware, so we'll check for a cookie
     const authBackup = request.cookies.get("auth-backup")?.value
-    if (authBackup) {
-      const data = JSON.parse(authBackup)
-      const isRecent = Date.now() - data.timestamp < 7 * 24 * 60 * 60 * 1000 // 7 days
-      return data.authenticated && isRecent
-    }
-    return false
+    if (!authBackup) return false
+
+    const data = JSON.parse(authBackup)
+    const isRecent = Date.now() - data.timestamp < 24 * 60 * 60 * 1000
+
+    return data.authenticated && isRecent
   } catch (e) {
     return false
   }
@@ -36,6 +58,9 @@ function hasBackupAuth(request: NextRequest) {
 
 export async function middleware(request: NextRequest) {
   try {
+    // Create response to modify
+    const response = NextResponse.next()
+
     // Get the pathname from the URL
     const { pathname } = request.nextUrl
 
@@ -50,23 +75,54 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
-    // Check for auth cookie
-    const hasAuthCookie =
-      request.cookies.has("sb-auth-token") || request.cookies.has("supabase-auth-token") || hasBackupAuth(request)
+    // Create a Supabase client configured for middleware
+    const supabase = createMiddlewareClient(request, response)
+    if (!supabase) {
+      console.error("Failed to create Supabase client in middleware")
+      return NextResponse.next() // Continue anyway to avoid blocking users
+    }
 
-    // If no auth cookie, redirect to simplified login
-    if (!hasAuthCookie) {
-      console.log("Middleware: No auth cookie found, redirecting to simplified login")
-      const redirectUrl = new URL("/auth/simplified-login", request.url)
+    // Try to get the session
+    let session = null
+    try {
+      const { data } = await supabase.auth.getSession()
+      session = data.session
+    } catch (error) {
+      console.error("Error getting session in middleware:", error)
+      // Continue with null session
+    }
+
+    // Check if the current route is protected
+    const isProtectedRoute = !isPublicPath(pathname)
+
+    // If user is not signed in and trying to access protected routes
+    if (!session && isProtectedRoute) {
+      // Check for backup auth
+      if (hasBackupAuth(request)) {
+        console.log("Middleware: Using backup auth for protected route")
+        return NextResponse.next()
+      }
+
+      console.log("Middleware: User is not signed in and trying to access protected route, redirecting to login")
+
+      // Store the original URL to redirect back after login
+      const redirectUrl = new URL("/auth/login", request.url)
       redirectUrl.searchParams.set("redirect", pathname)
+
       return NextResponse.redirect(redirectUrl)
     }
 
+    // Add auth session to response headers for server components
+    if (session) {
+      response.headers.set("x-supabase-auth", "authenticated")
+    }
+
     // Allow the request to continue
-    return NextResponse.next()
+    return response
   } catch (error) {
     console.error("Middleware error:", error)
-    // In case of error, allow the request to continue
+
+    // In case of error, allow the request to continue to avoid blocking the user
     return NextResponse.next()
   }
 }
