@@ -41,6 +41,9 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { formatCurrency, formatPercent, formatDate } from "@/lib/utils"
 import type { ProcessedTransaction, CompleteTrade, ImportSummary } from "@/types/import"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { useRouter } from "next/navigation"
+import { toast } from "@/components/ui/use-toast"
 
 interface TransactionReviewProps {
   transactions: ProcessedTransaction[]
@@ -204,6 +207,50 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
   const [createNewInstruments, setCreateNewInstruments] = useState(true)
   const [expandedTrades, setExpandedTrades] = useState<string[]>([])
   const [debugMode, setDebugMode] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
+  const router = useRouter()
+  const supabase = createClientComponentClient()
+
+  // Check authentication on component mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
+
+        if (error) {
+          console.error("Error checking auth:", error)
+          toast({
+            title: "Authentication Error",
+            description: "Please log in to continue.",
+            variant: "destructive",
+          })
+          router.push("/auth/login?redirect=/import/review")
+          return
+        }
+
+        if (!session || !session.user) {
+          console.log("No active session found, redirecting to login")
+          toast({
+            title: "Authentication Required",
+            description: "You must be logged in to import trades.",
+            variant: "destructive",
+          })
+          router.push("/auth/login?redirect=/import/review")
+          return
+        }
+
+        setUserId(session.user.id)
+      } catch (err) {
+        console.error("Auth check failed:", err)
+        router.push("/auth/login?redirect=/import/review")
+      }
+    }
+
+    checkAuth()
+  }, [supabase, router])
 
   // Debug logging
   useEffect(() => {
@@ -211,6 +258,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     console.log("Trades data:", trades)
     console.log("Transactions data:", transactions)
     console.log("Summary data:", summary)
+    console.log("User ID:", userId)
 
     // Check if data is available
     if (!trades || trades.length === 0) {
@@ -219,7 +267,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     if (!transactions || transactions.length === 0) {
       console.warn("No transactions data available")
     }
-  }, [trades, transactions, summary])
+  }, [trades, transactions, summary, userId])
 
   // Filter transactions by type based on active tab
   const filteredTransactions = useMemo(() => {
@@ -379,6 +427,16 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
 
   // Handle import button click
   const handleImport = async () => {
+    if (!userId) {
+      toast({
+        title: "Authentication Required",
+        description: "You must be logged in to import trades. Please log in and try again.",
+        variant: "destructive",
+      })
+      router.push("/auth/login?redirect=/import/review")
+      return
+    }
+
     setIsImporting(true)
     setImportProgress(0)
 
@@ -394,34 +452,87 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     }, 100)
 
     try {
-      // Prepare import configuration
-      const importConfig: ImportConfig = {
-        dateRange,
-        includeTypes,
-        createNewInstruments,
-        selectedTransactions,
-        selectedTrades,
+      // Filter trades based on selection
+      const tradesToImport =
+        selectedTrades.length > 0 ? trades.filter((trade) => selectedTrades.includes(trade.id)) : trades
+
+      // Prepare trades for database insertion
+      const tradesForDb = tradesToImport.map((trade) => ({
+        symbol: trade.symbol,
+        direction:
+          trade.assetType === "option" ? (trade.optionDetails?.optionType === "call" ? "Long" : "Short") : "Long",
+        entry_price: trade.entryPrice,
+        exit_price: trade.exitPrice || null,
+        entry_date: trade.entryDate.toISOString(),
+        exit_date: trade.exitDate ? trade.exitDate.toISOString() : null,
+        quantity: trade.quantity,
+        fees: trade.fees || 0,
+        commission: 0, // Default value
+        profit_loss: trade.profitLoss,
+        status: trade.status === "open" ? "Open" : trade.profitLoss > 0 ? "Win" : "Loss",
+        import_source: "csv",
+        user_id: userId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }))
+
+      // Insert trades into the database
+      if (tradesForDb.length > 0) {
+        const { error: tradeError } = await supabase.from("trades").upsert(tradesForDb)
+
+        if (tradeError) {
+          console.error("Error inserting trades:", tradeError)
+          toast({
+            title: "Import Error",
+            description: `Failed to import trades: ${tradeError.message}`,
+            variant: "destructive",
+          })
+          clearInterval(progressInterval)
+          setIsImporting(false)
+          return
+        }
       }
 
-      // Call the import function
-      await onImport(importConfig)
+      // Save import session to localStorage for reference
+      localStorage.setItem(
+        "last_import_session",
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          trades: tradesToImport.length,
+          transactions: selectedTransactions.length,
+          summary: summary,
+        }),
+      )
 
-      // Complete the progress
+      // Set success state
       clearInterval(progressInterval)
       setImportProgress(100)
       setImportSuccess(true)
 
-      // Reset after a delay
+      // Show success toast
+      toast({
+        title: "Import Successful",
+        description: `Imported ${tradesToImport.length} trades`,
+      })
+
+      // Set recentImport flag in localStorage
+      localStorage.setItem("recentImport", "true")
+      localStorage.setItem("importTimestamp", Date.now().toString())
+
+      // Wait a moment before redirecting
       setTimeout(() => {
-        setIsImporting(false)
-        setImportProgress(0)
+        router.push("/trades")
       }, 2000)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Import failed:", error)
+      toast({
+        title: "Import Failed",
+        description: error.message || "Unknown error occurred",
+        variant: "destructive",
+      })
       clearInterval(progressInterval)
       setImportProgress(0)
       setIsImporting(false)
-      // Handle error
     }
   }
 
@@ -889,6 +1000,18 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       spyTrades.forEach(debugOptionPrices)
     }
   }, [trades])
+
+  // Show loading state if checking authentication
+  if (!userId) {
+    return (
+      <div className="container mx-auto py-6 flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Checking authentication...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <Card className="glass-panel rounded-xl overflow-hidden">

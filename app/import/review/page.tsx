@@ -6,10 +6,11 @@ import { TransactionReview } from "@/components/import/transaction-review"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, CheckCircle } from "lucide-react"
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import type { ProcessedTransaction, CompleteTrade, ImportSummary, ImportConfig } from "@/types/import"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/use-toast"
 
 export default function TransactionReviewPage() {
   const router = useRouter()
@@ -22,6 +23,7 @@ export default function TransactionReviewPage() {
   const [transactions, setTransactions] = useState<ProcessedTransaction[]>([])
   const [trades, setTrades] = useState<CompleteTrade[]>([])
   const [summary, setSummary] = useState<ImportSummary | null>(null)
+  const [importSuccess, setImportSuccess] = useState(false)
 
   const supabase = createClientComponentClient()
 
@@ -106,19 +108,114 @@ export default function TransactionReviewPage() {
 
   const handleImport = async (config: ImportConfig) => {
     try {
-      // In a real implementation, this would send the import configuration to your server
-      // and process the import
-      console.log("Import configuration:", config)
+      console.log("Starting import process with config:", config)
 
-      // Simulate an API call
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      // Get the user ID
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
-      // Redirect to trades page after successful import
+      if (!user) {
+        toast({
+          title: "Authentication Error",
+          description: "You must be logged in to import trades",
+          variant: "destructive",
+        })
+        return Promise.reject(new Error("Authentication required"))
+      }
+
+      const userId = user.id
+
+      // Filter trades based on selection
+      const tradesToImport =
+        config.selectedTrades.length > 0 ? trades.filter((trade) => config.selectedTrades.includes(trade.id)) : trades
+
+      // Filter transactions based on selection
+      const transactionsToImport =
+        config.selectedTransactions.length > 0
+          ? transactions.filter((tx) => config.selectedTransactions.includes(tx.rowIndex.toString()))
+          : transactions
+
+      console.log(`Importing ${tradesToImport.length} trades and ${transactionsToImport.length} transactions`)
+
+      // Start a batch insert for trades
+      if (tradesToImport.length > 0) {
+        // Prepare trades for database insertion
+        const tradesForDb = tradesToImport.map((trade) => ({
+          id: trade.id,
+          user_id: userId,
+          symbol: trade.symbol,
+          direction:
+            trade.assetType === "option" ? (trade.optionDetails?.optionType === "call" ? "long" : "short") : "long",
+          entry_price: trade.entryPrice,
+          exit_price: trade.exitPrice || null,
+          entry_date: trade.entryDate.toISOString(),
+          exit_date: trade.exitDate ? trade.exitDate.toISOString() : null,
+          quantity: trade.quantity,
+          fees: trade.fees || 0,
+          commission: 0, // Default value
+          profit_loss: trade.profitLoss,
+          profit_loss_percent: trade.profitLossPercent,
+          status: trade.status === "open" ? "open" : "closed",
+          import_source: "csv",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }))
+
+        // Insert trades into the database
+        const { data: insertedTrades, error: tradeError } = await supabase
+          .from("trades")
+          .upsert(tradesForDb, { onConflict: "id" })
+          .select()
+
+        if (tradeError) {
+          console.error("Error inserting trades:", tradeError)
+          toast({
+            title: "Import Error",
+            description: `Failed to import trades: ${tradeError.message}`,
+            variant: "destructive",
+          })
+          return Promise.reject(tradeError)
+        }
+
+        console.log("Successfully imported trades:", insertedTrades)
+      }
+
+      // Save import session to localStorage for reference
+      localStorage.setItem(
+        "last_import_session",
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          trades: tradesToImport.length,
+          transactions: transactionsToImport.length,
+          summary: summary,
+        }),
+      )
+
+      // Set success state
+      setImportSuccess(true)
+
+      // Show success toast
+      toast({
+        title: "Import Successful",
+        description: `Imported ${tradesToImport.length} trades and ${transactionsToImport.length} transactions`,
+        variant: "default",
+      })
+
+      // Wait a moment before redirecting
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+
+      // Redirect to trades page
       router.push("/trades")
 
       return Promise.resolve()
     } catch (error) {
       console.error("Import failed:", error)
+      toast({
+        title: "Import Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      })
       return Promise.reject(error)
     }
   }
@@ -156,12 +253,31 @@ export default function TransactionReviewPage() {
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error || "Failed to load import data. Please try again."}</AlertDescription>
         </Alert>
+        <div className="mt-4">
+          <Button variant="outline" onClick={() => router.push("/import")}>
+            Back to Import
+          </Button>
+        </div>
       </div>
     )
   }
 
-  const handleFinishImport = async () => {
-    router.push("/trades")
+  if (importSuccess) {
+    return (
+      <div className="container py-8 max-w-7xl animate-in">
+        <h1 className="text-3xl font-bold mb-6">Import Successful</h1>
+        <Alert variant="default" className="bg-green-50 border-green-200">
+          <CheckCircle className="h-4 w-4 text-green-500" />
+          <AlertTitle>Success</AlertTitle>
+          <AlertDescription>
+            Your trades have been successfully imported. You will be redirected to the trades page shortly.
+          </AlertDescription>
+        </Alert>
+        <div className="mt-4">
+          <Button onClick={() => router.push("/trades")}>View Trades</Button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -173,28 +289,7 @@ export default function TransactionReviewPage() {
         summary={summary}
         onBack={handleBack}
         onImport={handleImport}
-        sessionId={sessionId}
       />
-      <div className="mt-8 flex justify-between">
-        <Button variant="outline" onClick={() => router.push("/import")}>
-          Back to Import
-        </Button>
-        <Button onClick={handleFinishImport}>Finish Import</Button>
-      </div>
-      {process.env.NODE_ENV === "development" && (
-        <div className="mt-8 p-4 border border-gray-700 rounded-md">
-          <h3 className="text-lg font-medium mb-2">Debug Information</h3>
-          <p>Session ID: {sessionId || "Not provided"}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => console.log("Current session data:", sessionId)}
-            className="mt-2"
-          >
-            Log Session Data
-          </Button>
-        </div>
-      )}
     </div>
   )
 }

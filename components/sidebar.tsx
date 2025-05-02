@@ -15,6 +15,7 @@ import {
   Settings,
   TrendingUp,
   User,
+  FileCheck,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -67,6 +68,12 @@ export default function Sidebar() {
       icon: TrendingUp,
       href: "/trades",
       active: pathname === "/trades" || pathname?.startsWith("/trades/"),
+    },
+    {
+      label: "Import Trades",
+      icon: FileCheck,
+      href: "/import",
+      active: pathname === "/import" || pathname?.startsWith("/import/"),
     },
     {
       label: "Analytics",

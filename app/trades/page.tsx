@@ -1,270 +1,278 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { useAuth } from "@/components/auth/auth-provider"
-import { supabase } from "@/lib/supabase/client"
+import { useEffect, useState } from "react"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { TradesDataTable } from "@/components/trades/trades-data-table"
+import { TradesFilterPanel } from "@/components/trades/trades-filter-panel"
+import { TradesSummaryStats } from "@/components/trades/trades-summary-stats"
+import { TradesViewToggle } from "@/components/trades/trades-view-toggle"
+import { TradesBulkActions } from "@/components/trades/trades-bulk-actions"
+import { TradesCalendarView } from "@/components/trades/trades-calendar-view"
+import { TradesHeatmapView } from "@/components/trades/trades-heatmap-view"
 import { Button } from "@/components/ui/button"
-import { LogIn } from "lucide-react"
-import { Skeleton } from "@/components/ui/skeleton"
-import { format, subDays } from "date-fns"
+import { RefreshCw } from "lucide-react"
+import { toast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { InfoIcon } from "lucide-react"
-
-// Mock data for development
-const mockTrades = [
-  {
-    id: "1",
-    created_at: new Date().toISOString(),
-    user_id: "user123",
-    symbol: "AAPL",
-    direction: "Long",
-    entry_price: 150.25,
-    exit_price: 155.75,
-    entry_date: new Date().toISOString(),
-    exit_date: new Date().toISOString(),
-    quantity: 100,
-    pnl: 550,
-    status: "Win",
-    setup: "Breakout",
-    rating: 4,
-    commission: 5.99,
-    fees: 1.25,
-  },
-  {
-    id: "2",
-    created_at: new Date().toISOString(),
-    user_id: "user123",
-    symbol: "MSFT",
-    direction: "Long",
-    entry_price: 280.5,
-    exit_price: 285.25,
-    entry_date: new Date().toISOString(),
-    exit_date: new Date().toISOString(),
-    quantity: 50,
-    pnl: 237.5,
-    status: "Win",
-    setup: "Pullback",
-    rating: 3,
-    commission: 5.99,
-    fees: 1.25,
-  },
-  {
-    id: "3",
-    created_at: new Date().toISOString(),
-    user_id: "user123",
-    symbol: "TSLA",
-    direction: "Short",
-    entry_price: 220.75,
-    exit_price: 210.25,
-    entry_date: new Date().toISOString(),
-    exit_date: new Date().toISOString(),
-    quantity: 25,
-    pnl: 262.5,
-    status: "Win",
-    setup: "Reversal",
-    rating: 5,
-    commission: 5.99,
-    fees: 1.25,
-  },
-]
-
-// Helper function to handle Supabase API errors
-const handleSupabaseError = (error: any, operation: string): string => {
-  // Check if it's a rate limit error
-  if (error?.message?.includes("Too Many R")) {
-    console.warn(`Rate limit hit during ${operation}. Using mock data.`)
-    return "Rate limit exceeded. Please try again later."
-  }
-
-  // Log other errors
-  console.error(`Error during ${operation}:`, error)
-  return `Failed to ${operation}. ${error?.message || "Unknown error"}`
-}
+import type { TradeFilters, TradeSortField, SortDirection } from "@/hooks/use-trades"
+import type { Trade } from "@/hooks/use-trades"
+import { useRouter } from "next/navigation"
+import { AuthService } from "@/lib/auth-service"
 
 export default function TradesPage() {
+  const [trades, setTrades] = useState<Trade[]>([])
+  const [loading, setLoading] = useState(true)
+  const [view, setView] = useState("table")
+  const [recentImport, setRecentImport] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [filters, setFilters] = useState<TradeFilters>({})
+  const [selectedTrades, setSelectedTrades] = useState<string[]>([])
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [sortBy, setSortBy] = useState<TradeSortField>("entry_date")
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
+  const [userId, setUserId] = useState<string | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const supabase = createClientComponentClient()
   const router = useRouter()
-  const { user } = useAuth() || { user: null }
 
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [trades, setTrades] = useState<any[]>([])
-
-  // Simple fetch function
+  // Check authentication status - improved to prevent redirect loops
   useEffect(() => {
-    let isMounted = true
-
-    const fetchTrades = async () => {
-      if (!user) return
-
+    const checkAuth = async () => {
       try {
-        setIsLoading(true)
-
-        // Try to fetch from Supabase
+        // First try to get userId from localStorage for faster initial render
         try {
-          const { data, error } = await supabase
-            .from("trades")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("entry_date", { ascending: false })
-            .limit(10)
-
-          if (error) {
-            const errorMessage = handleSupabaseError(error, "fetch trades")
-            setError(errorMessage)
-            // Fall back to mock data
-            setTrades(mockTrades)
-            return
+          const backup = localStorage.getItem("auth-backup")
+          if (backup) {
+            const data = JSON.parse(backup)
+            if (data.authenticated && data.userId && Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+              console.log("Using backup auth from localStorage")
+              setUserId(data.userId)
+              setAuthChecked(true)
+              // Continue with session check in background
+            }
           }
-
-          if (isMounted) {
-            setTrades(data || [])
-            setError(null)
-          }
-        } catch (err: any) {
-          console.error("Supabase query error:", err)
-          // Fall back to mock data
-          if (isMounted) {
-            setTrades(mockTrades)
-            setError(err.message || "Failed to fetch trades from database")
-          }
+        } catch (e) {
+          console.error("Could not get backup auth", e)
         }
-      } catch (err: any) {
-        if (isMounted) {
-          setError("An unexpected error occurred")
+
+        // Try to get the session from AuthService
+        const session = await AuthService.getSession()
+
+        if (session && session.user) {
+          console.log("Found active session")
+          setUserId(session.user.id)
+          setAuthChecked(true)
+          return
         }
+
+        // If no session, try backup auth
+        const backupAuth = AuthService.getBackupAuthState()
+        if (backupAuth?.authenticated && backupAuth.userId) {
+          console.log("Using backup auth state")
+          setUserId(backupAuth.userId)
+          setAuthChecked(true)
+          return
+        }
+
+        // If we get here, we have no valid auth
+        console.log("No valid authentication found")
+
+        // Only redirect if we haven't already set a userId from backup
+        if (!userId) {
+          console.log("Redirecting to login")
+          router.push("/auth/login?redirect=/trades")
+        }
+      } catch (err) {
+        console.error("Auth check failed:", err)
+        // Don't redirect on error, just mark auth as checked
+        setAuthChecked(true)
       } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
+        // Always mark auth as checked to prevent infinite loading
+        setAuthChecked(true)
       }
     }
 
-    fetchTrades()
+    checkAuth()
+  }, [router, userId])
 
-    return () => {
-      isMounted = false
+  // Fetch trades when userId is available
+  useEffect(() => {
+    if (userId) {
+      fetchTrades()
     }
-  }, [user])
+  }, [userId])
 
-  // Render authentication required state
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[70vh] p-6">
-        <div className="glass-card p-8 max-w-md text-center">
-          <h2 className="text-2xl font-bold mb-4">Authentication Required</h2>
-          <p className="text-muted-foreground mb-6">Please sign in to view your trades.</p>
-          <Button onClick={() => router.push("/auth/login")} className="gap-2">
-            <LogIn className="h-4 w-4" />
-            Sign In
-          </Button>
-        </div>
-      </div>
-    )
+  const fetchTrades = async () => {
+    if (!userId) {
+      console.log("No user ID found, waiting for authentication")
+      return
+    }
+
+    setRefreshing(true)
+    try {
+      console.log("Fetching trades for user:", userId)
+      const { data, error } = await supabase
+        .from("trades")
+        .select("*")
+        .eq("user_id", userId)
+        .order("entry_date", { ascending: false })
+
+      if (error) {
+        console.error("Error fetching trades:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load trades. Please try again.",
+          variant: "destructive",
+        })
+      } else {
+        console.log(`Successfully fetched ${data?.length || 0} trades`)
+        setTrades(data || [])
+      }
+    } catch (error) {
+      console.error("Error in fetch process:", error)
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
   }
 
-  // Render loading state
-  if (isLoading && trades.length === 0) {
-    return (
-      <div className="flex flex-col gap-6 p-6 animate-in">
-        <div className="flex items-center justify-between">
-          <div>
-            <Skeleton className="h-8 w-64" />
-            <Skeleton className="h-4 w-48 mt-2" />
-          </div>
-          <div className="flex items-center gap-2">
-            <Skeleton className="h-10 w-32" />
-            <Skeleton className="h-10 w-32" />
-          </div>
-        </div>
+  useEffect(() => {
+    // Check if there was a recent import
+    const hasRecentImport = localStorage.getItem("recentImport") === "true"
+    const importTimestamp = localStorage.getItem("importTimestamp")
 
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-[500px] w-full" />
+    // Only show the notification if the import was recent (within the last 5 minutes)
+    if (hasRecentImport && importTimestamp) {
+      const importTime = Number.parseInt(importTimestamp, 10)
+      const currentTime = Date.now()
+      const fiveMinutesInMs = 5 * 60 * 1000
+
+      if (currentTime - importTime < fiveMinutesInMs) {
+        setRecentImport(true)
+
+        // Clear the flag after 1 minute of viewing
+        setTimeout(() => {
+          localStorage.removeItem("recentImport")
+          setRecentImport(false)
+        }, 60000)
+      } else {
+        // Clear old import flags
+        localStorage.removeItem("recentImport")
+        localStorage.removeItem("importTimestamp")
+      }
+    }
+  }, [])
+
+  const handleRefresh = () => {
+    fetchTrades()
+  }
+
+  const dismissImportNotification = () => {
+    setRecentImport(false)
+    localStorage.removeItem("recentImport")
+  }
+
+  const handleFilterChange = (newFilters: TradeFilters) => {
+    setFilters(newFilters)
+    // Apply filters to fetch trades
+    console.log("Applying filters:", newFilters)
+  }
+
+  const handleFilterPreset = (preset: string) => {
+    // Handle filter presets
+    console.log("Applying preset:", preset)
+  }
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage)
+  }
+
+  const handlePageSizeChange = (newPageSize: number) => {
+    setPageSize(newPageSize)
+    setPage(1) // Reset to first page when changing page size
+  }
+
+  const handleSortChange = (field: TradeSortField) => {
+    if (sortBy === field) {
+      // Toggle direction if clicking the same field
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+    } else {
+      // Default to descending for new sort field
+      setSortBy(field)
+      setSortDirection("desc")
+    }
+  }
+
+  const handleSelectionChange = (selectedIds: string[]) => {
+    setSelectedTrades(selectedIds)
+  }
+
+  // Define a handler function for view changes
+  const handleViewChange = (newView: string) => {
+    setView(newView)
+  }
+
+  // Show loading state while checking auth
+  if (!authChecked || (loading && !trades.length)) {
+    return (
+      <div className="container mx-auto py-6 flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading your trades...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 animate-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Trades</h1>
-          <p className="text-muted-foreground">
-            {trades.length} trades • {format(subDays(new Date(), 30), "MMM d, yyyy")} -{" "}
-            {format(new Date(), "MMM d, yyyy")}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => router.push("/trades/new")} className="gap-2">
-            Add New Trade
-          </Button>
-        </div>
+    <div className="container mx-auto py-6 space-y-4">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold">Trades</h1>
+        <Button onClick={handleRefresh} variant="outline" size="sm" disabled={refreshing}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing..." : "Refresh"}
+        </Button>
       </div>
 
-      {/* Error message */}
-      {error && (
-        <Alert variant="destructive" className="mb-4">
-          <InfoIcon className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}. Using mock data instead.</AlertDescription>
+      {recentImport && (
+        <Alert className="bg-green-50 border-green-200">
+          <AlertTitle>Import Successful</AlertTitle>
+          <AlertDescription className="flex justify-between items-center">
+            <span>Your trades have been imported successfully.</span>
+            <Button variant="outline" size="sm" onClick={dismissImportNotification}>
+              Dismiss
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
 
-      {/* Simple trades list */}
-      <div className="glass-card rounded-lg overflow-hidden p-4">
-        <div className="grid grid-cols-1 gap-4">
-          {trades.map((trade) => (
-            <div
-              key={trade.id}
-              className="border rounded-lg p-4 hover:bg-secondary/10 cursor-pointer"
-              onClick={() => router.push(`/trades/${trade.id}`)}
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="font-bold">{trade.symbol}</h3>
-                  <p className="text-sm text-muted-foreground">{format(new Date(trade.entry_date), "MMM d, yyyy")}</p>
-                </div>
-                <div className="flex flex-col items-end">
-                  <span
-                    className={`font-bold ${trade.pnl > 0 ? "text-green-500" : trade.pnl < 0 ? "text-red-500" : ""}`}
-                  >
-                    ${trade.pnl?.toFixed(2) || "Open"}
-                  </span>
-                  <span
-                    className={`text-xs px-2 py-1 rounded-full ${
-                      trade.status === "Win"
-                        ? "bg-green-100 text-green-800"
-                        : trade.status === "Loss"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-blue-100 text-blue-800"
-                    }`}
-                  >
-                    {trade.status}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-2 flex justify-between text-sm">
-                <span>
-                  {trade.direction} • {trade.quantity} shares
-                </span>
-                <span>
-                  Entry: ${trade.entry_price} • Exit: ${trade.exit_price || "Open"}
-                </span>
-              </div>
-            </div>
-          ))}
+      <TradesSummaryStats trades={trades} />
 
-          {trades.length === 0 && !isLoading && (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">No trades found. Add your first trade to get started.</p>
-              <Button variant="outline" className="mt-4" onClick={() => router.push("/trades/new")}>
-                Add First Trade
-              </Button>
-            </div>
-          )}
-        </div>
+      <div className="flex justify-between items-center">
+        <TradesFilterPanel filters={filters} onFilterChange={handleFilterChange} onFilterPreset={handleFilterPreset} />
+        <TradesViewToggle activeView={view} onViewChange={handleViewChange} />
       </div>
+
+      <TradesBulkActions selectedTrades={selectedTrades} />
+
+      {view === "table" && (
+        <TradesDataTable
+          trades={trades}
+          isLoading={loading}
+          page={page}
+          pageSize={pageSize}
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          totalCount={trades.length}
+          selectedTrades={selectedTrades}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          onSortChange={handleSortChange}
+          onSelectionChange={handleSelectionChange}
+        />
+      )}
+      {view === "calendar" && <TradesCalendarView trades={trades} />}
+      {view === "heatmap" && <TradesHeatmapView trades={trades} />}
     </div>
   )
 }

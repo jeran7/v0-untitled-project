@@ -7,9 +7,20 @@ interface TradesViewToggleProps {
   onViewChange: (view: string) => void
 }
 
-export function TradesViewToggle({ activeView, onViewChange }: TradesViewToggleProps) {
+export function TradesViewToggle({
+  activeView,
+  onViewChange = () => {}, // Provide default empty function
+}: TradesViewToggleProps) {
   return (
-    <ToggleGroup type="single" value={activeView} onValueChange={(value) => value && onViewChange(value)}>
+    <ToggleGroup
+      type="single"
+      value={activeView}
+      onValueChange={(value) => {
+        if (value && typeof onViewChange === "function") {
+          onViewChange(value)
+        }
+      }}
+    >
       <ToggleGroupItem value="table" aria-label="Table view">
         <Grid className="h-4 w-4 mr-2" />
         Table

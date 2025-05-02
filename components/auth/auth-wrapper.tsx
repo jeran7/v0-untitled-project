@@ -36,19 +36,34 @@ export function AuthWrapper({ children, bypassSubscriptionCheck = false }: AuthW
       try {
         setIsLoading(true)
 
+        // Try to get userId from localStorage first for faster initial render
+        try {
+          const backup = localStorage.getItem("auth-backup")
+          if (backup) {
+            const data = JSON.parse(backup)
+            if (data.authenticated && data.userId && Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+              console.log("Using backup auth from localStorage")
+              setUserId(data.userId)
+              // Continue with session check in background
+            }
+          }
+        } catch (e) {
+          console.error("Could not get backup auth", e)
+        }
+
         // Check if user is authenticated
         const session = await AuthService.getSession()
 
         if (!session) {
           // Try backup auth
           const backupAuth = AuthService.getBackupAuthState()
-          if (!backupAuth?.authenticated) {
+          if (!backupAuth?.authenticated && !userId) {
             router.push("/auth/login")
             return
           }
 
           // Use backup user ID if available
-          if (backupAuth.userId) {
+          if (backupAuth?.userId && !userId) {
             setUserId(backupAuth.userId)
           }
         } else {

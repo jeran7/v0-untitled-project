@@ -1,37 +1,66 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
+import { Trash2, Copy, Tag, Download, FileText, MoreHorizontal } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ChevronDown, Download, Tag, Trash } from "lucide-react"
 
 interface TradesBulkActionsProps {
-  selectedCount: number
-  onAction: (action: string) => void
+  selectedTrades?: string[]
 }
 
-export function TradesBulkActions({ selectedCount, onAction }: TradesBulkActionsProps) {
+export function TradesBulkActions({ selectedTrades = [] }: TradesBulkActionsProps) {
+  const hasSelection = selectedTrades.length > 0
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-1" disabled={selectedCount === 0}>
-          {selectedCount > 0 ? `${selectedCount} Selected` : "No Selection"}
-          <ChevronDown className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onAction("export")} className="gap-2">
-          <Download className="h-4 w-4" />
-          Export Selected
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onAction("tag")} className="gap-2">
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        {hasSelection && (
+          <span className="text-sm text-muted-foreground">
+            {selectedTrades.length} {selectedTrades.length === 1 ? "trade" : "trades"} selected
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" className="flex items-center gap-1" disabled={!hasSelection}>
           <Tag className="h-4 w-4" />
-          Add Tags
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onAction("delete")} className="gap-2 text-destructive">
-          <Trash className="h-4 w-4" />
-          Delete Selected
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <span className="hidden sm:inline">Add Tags</span>
+        </Button>
+        <Button variant="outline" size="sm" className="flex items-center gap-1" disabled={!hasSelection}>
+          <Copy className="h-4 w-4" />
+          <span className="hidden sm:inline">Duplicate</span>
+        </Button>
+        <Button variant="outline" size="sm" className="flex items-center gap-1" disabled={!hasSelection}>
+          <Download className="h-4 w-4" />
+          <span className="hidden sm:inline">Export</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex items-center gap-1 text-destructive hover:bg-destructive/10"
+          disabled={!hasSelection}
+        >
+          <Trash2 className="h-4 w-4" />
+          <span className="hidden sm:inline">Delete</span>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" className="h-8 w-8" disabled={!hasSelection}>
+              <MoreHorizontal className="h-4 w-4" />
+              <span className="sr-only">More actions</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={!hasSelection}>
+              <FileText className="h-4 w-4 mr-2" />
+              Generate Report
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!hasSelection}>
+              <Tag className="h-4 w-4 mr-2" />
+              Categorize
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
   )
 }

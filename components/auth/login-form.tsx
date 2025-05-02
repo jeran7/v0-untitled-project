@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,15 +13,28 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Icons } from "@/components/ui/icons"
 import { AuthService } from "@/lib/auth-service"
 import { supabase } from "@/lib/supabase/client"
+import { useToast } from "@/components/ui/use-toast"
 
 export function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const redirect = searchParams.get("redirect") || "/dashboard"
+  const redirectCount = Number.parseInt(searchParams.get("redirectCount") || "0", 10)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [showBackupAuth, setShowBackupAuth] = useState(false)
+  const { toast } = useToast()
+
+  // Check for redirect loops
+  useEffect(() => {
+    if (redirectCount > 2) {
+      setError("Detected a redirect loop. Please try using backup authentication or contact support.")
+      setShowBackupAuth(true)
+    }
+  }, [redirectCount])
 
   // Check for backup auth state on load
   useEffect(() => {
@@ -34,58 +47,35 @@ export function LoginForm() {
   // Update the handleSubmit function to improve error handling and user feedback
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsLoading(true)
     setError(null)
     setSuccess(null)
-    setIsLoading(true)
-
-    // Add timeout to prevent infinite spinner
-    const loginTimeout = setTimeout(() => {
-      if (isLoading) {
-        setIsLoading(false)
-        setError("Login request timed out. Please try again.")
-        console.error("Login timeout reached")
-      }
-    }, 10000)
-
-    if (!email || !password) {
-      clearTimeout(loginTimeout)
-      setError("Please enter both email and password")
-      setIsLoading(false)
-      return
-    }
 
     try {
-      console.log("Attempting to sign in with:", email)
-
-      // Add development mode hint
-      if (process.env.NODE_ENV === "development") {
-        console.log("Development mode: You can use demo@example.com / demo123 for testing")
-      }
-
       const result = await AuthService.signIn(email, password)
-
-      clearTimeout(loginTimeout) // Clear the timeout on success
 
       if (result.success) {
         setSuccess("Login successful! Redirecting...")
 
-        // Force a small delay to ensure session is properly set
-        await new Promise((resolve) => setTimeout(resolve, 1500))
+        // Store the successful login in localStorage to avoid unnecessary redirects
+        localStorage.setItem("loginSuccess", "true")
 
-        // Navigate to dashboard
-        window.location.href = "/dashboard"
+        // Force a small delay to ensure session is properly set
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+
+        // Redirect to the requested page or dashboard
+        // If we're in a redirect loop, go to dashboard instead
+        const safeRedirect = redirectCount > 2 ? "/dashboard" : redirect
+        router.push(safeRedirect)
       } else {
-        console.warn("Login failed:", result.error)
-        setError(result.error || "Login failed")
+        setError(result.error || "Failed to sign in")
         setShowBackupAuth(true)
       }
     } catch (err: any) {
-      clearTimeout(loginTimeout) // Clear the timeout on error
-      console.error("Login exception:", err)
-      setError("An unexpected error occurred. Please try again.")
+      console.error("Login error:", err)
+      setError(err.message || "An unexpected error occurred")
       setShowBackupAuth(true)
     } finally {
-      clearTimeout(loginTimeout) // Ensure timeout is cleared
       setIsLoading(false)
     }
   }
@@ -140,12 +130,59 @@ export function LoginForm() {
     const backupAuth = AuthService.getBackupAuthState()
     if (backupAuth?.authenticated) {
       setSuccess(`Using backup authentication for ${backupAuth.user}. Redirecting...`)
+
+      // Store auth in localStorage and cookies
+      try {
+        document.cookie = `auth-backup=${JSON.stringify({
+          authenticated: true,
+          timestamp: Date.now(),
+          userId: backupAuth.userId,
+        })}; path=/; max-age=86400; SameSite=Lax;`
+      } catch (e) {
+        console.error("Could not set auth cookie", e)
+      }
+
       setTimeout(() => {
-        window.location.href = "/dashboard"
+        // If we're in a redirect loop, go to dashboard instead
+        const safeRedirect = redirectCount > 2 ? "/dashboard" : redirect
+        window.location.href = safeRedirect
       }, 1500)
     } else {
       setError("No valid backup authentication found")
     }
+  }
+
+  // Add development mode bypass for testing
+  const handleDevBypass = () => {
+    if (process.env.NODE_ENV !== "development") return
+
+    const devUserId = "70adc632-3d46-4689-b462-54eee42c6c7e" // Demo user ID
+
+    // Set backup auth
+    localStorage.setItem(
+      "auth-backup",
+      JSON.stringify({
+        authenticated: true,
+        timestamp: Date.now(),
+        user: "demo@example.com",
+        userId: devUserId,
+      }),
+    )
+
+    // Set cookie
+    document.cookie = `auth-backup=${JSON.stringify({
+      authenticated: true,
+      timestamp: Date.now(),
+      userId: devUserId,
+    })}; path=/; max-age=86400; SameSite=Lax;`
+
+    setSuccess("Development bypass activated. Redirecting...")
+
+    setTimeout(() => {
+      // If we're in a redirect loop, go to dashboard instead
+      const safeRedirect = redirectCount > 2 ? "/dashboard" : redirect
+      window.location.href = safeRedirect
+    }, 1500)
   }
 
   return (
@@ -174,6 +211,15 @@ export function LoginForm() {
             <Alert className="bg-green-500/20 text-green-700 border-green-500">
               <CheckCircle className="h-4 w-4" />
               <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+
+          {redirectCount > 2 && (
+            <Alert className="bg-amber-50 border-amber-200">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Authentication loop detected. Try using backup authentication or the development bypass.
+              </AlertDescription>
             </Alert>
           )}
 
@@ -226,6 +272,17 @@ export function LoginForm() {
               onClick={handleBackupAuth}
             >
               Try Backup Authentication
+            </Button>
+          )}
+
+          {process.env.NODE_ENV === "development" && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full mt-2 border-green-500/50 bg-green-500/10 hover:bg-green-500/20"
+              onClick={handleDevBypass}
+            >
+              Development Bypass
             </Button>
           )}
 

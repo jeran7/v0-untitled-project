@@ -1,176 +1,226 @@
 "use client"
 
-import { useState } from "react"
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  CalendarIcon,
-  ChevronDownIcon,
-  FilterIcon,
-  PlusIcon,
-  RefreshCwIcon,
-} from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useEffect, useState } from "react"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
-import { format } from "date-fns"
-import EquityCurveChart from "@/components/equity-curve-chart"
-import RecentTradesTable from "@/components/recent-trades-table"
-import PerformanceMetrics from "@/components/performance-metrics"
-import WinRateChart from "@/components/win-rate-chart"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { BarChart3, LineChart, TrendingUp, ArrowRight, CheckCircle, Shield } from "lucide-react"
+import Link from "next/link"
 
-export default function Dashboard() {
-  const [date, setDate] = useState<Date | undefined>(new Date())
+export default function LandingPage() {
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const supabase = createClientComponentClient()
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
+
+        if (error) {
+          console.error("Error checking auth:", error)
+          setLoading(false)
+          return
+        }
+
+        if (session && session.user) {
+          // User is logged in, redirect to dashboard
+          router.push("/dashboard")
+        } else {
+          // User is not logged in, show landing page
+          setLoading(false)
+        }
+      } catch (err) {
+        console.error("Auth check failed:", err)
+        setLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [supabase, router])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col gap-6 p-6 animate-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">Your trading performance at a glance</p>
+    <div className="flex flex-col min-h-screen">
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container flex h-16 items-center justify-between py-4">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-6 w-6 text-primary" />
+            <span className="text-xl font-bold">Trading Journal</span>
+          </div>
+          <nav className="flex items-center gap-6">
+            <Link href="/auth/login" className="text-sm font-medium hover:underline">
+              Login
+            </Link>
+            <Link href="/auth/register">
+              <Button>Sign Up</Button>
+            </Link>
+          </nav>
         </div>
-        <div className="flex items-center gap-2">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="flex items-center gap-2">
-                <CalendarIcon className="h-4 w-4" />
-                {date ? format(date, "MMM dd, yyyy") : "Select date"}
-                <ChevronDownIcon className="h-4 w-4" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar mode="single" selected={date} onSelect={setDate} initialFocus />
-            </PopoverContent>
-          </Popover>
-          <Button variant="outline" size="icon">
-            <RefreshCwIcon className="h-4 w-4" />
-          </Button>
-          <Button className="gap-2">
-            <PlusIcon className="h-4 w-4" />
-            New Trade
-          </Button>
+      </header>
+
+      <main className="flex-1">
+        <section className="py-12 md:py-24 lg:py-32 xl:py-48">
+          <div className="container px-4 md:px-6">
+            <div className="grid gap-6 lg:grid-cols-2 lg:gap-12 xl:grid-cols-2">
+              <div className="flex flex-col justify-center space-y-4">
+                <div className="space-y-2">
+                  <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none">
+                    Track, Analyze, Improve Your Trading
+                  </h1>
+                  <p className="max-w-[600px] text-muted-foreground md:text-xl">
+                    The all-in-one trading journal that helps you track your trades, analyze your performance, and
+                    improve your strategy.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 min-[400px]:flex-row">
+                  <Link href="/auth/register">
+                    <Button size="lg" className="gap-1.5">
+                      Get Started <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                  <Link href="/auth/login">
+                    <Button size="lg" variant="outline">
+                      Login
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+              <div className="flex items-center justify-center">
+                <div className="relative h-[350px] w-full md:h-[450px] lg:h-[550px]">
+                  <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-lg shadow-lg overflow-hidden">
+                    <div className="absolute inset-0 backdrop-blur-sm">
+                      <div className="absolute inset-0 bg-white/10"></div>
+                    </div>
+                    <div className="relative p-6 h-full flex flex-col justify-center">
+                      <div className="grid grid-cols-2 gap-4">
+                        <Card className="bg-white/80 backdrop-blur-sm">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-lg flex items-center gap-2">
+                              <LineChart className="h-5 w-5 text-blue-500" />
+                              Performance
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="h-32 bg-blue-100/50 rounded-md flex items-center justify-center">
+                              <div className="w-full h-20 flex items-end px-2">
+                                <div className="w-1/5 h-4 bg-blue-500 rounded-t"></div>
+                                <div className="w-1/5 h-8 bg-blue-500 rounded-t"></div>
+                                <div className="w-1/5 h-12 bg-blue-500 rounded-t"></div>
+                                <div className="w-1/5 h-6 bg-blue-500 rounded-t"></div>
+                                <div className="w-1/5 h-16 bg-blue-500 rounded-t"></div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                        <Card className="bg-white/80 backdrop-blur-sm">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-lg flex items-center gap-2">
+                              <BarChart3 className="h-5 w-5 text-blue-500" />
+                              Statistics
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div className="flex justify-between">
+                                <span className="text-sm">Win Rate</span>
+                                <span className="font-medium text-blue-500">68.5%</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-sm">Profit Factor</span>
+                                <span className="font-medium text-blue-500">2.34</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-sm">Total P&L</span>
+                                <span className="font-medium text-blue-500">$12,458.32</span>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="bg-muted/50 py-12 md:py-24 lg:py-32">
+          <div className="container px-4 md:px-6">
+            <div className="flex flex-col items-center justify-center space-y-4 text-center">
+              <div className="space-y-2">
+                <h2 className="text-3xl font-bold tracking-tighter md:text-4xl/tight">
+                  Features That Help You Trade Better
+                </h2>
+                <p className="max-w-[900px] text-muted-foreground md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed">
+                  Our trading journal provides all the tools you need to track, analyze, and improve your trading
+                  performance.
+                </p>
+              </div>
+            </div>
+            <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 py-12 md:grid-cols-3 md:gap-8">
+              <div className="flex flex-col items-center space-y-2 rounded-lg p-4 transition-all hover:bg-muted">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                  <BarChart3 className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-xl font-bold">Advanced Analytics</h3>
+                <p className="text-center text-muted-foreground">
+                  Gain insights into your trading patterns with detailed performance metrics and visualizations.
+                </p>
+              </div>
+              <div className="flex flex-col items-center space-y-2 rounded-lg p-4 transition-all hover:bg-muted">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                  <CheckCircle className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-xl font-bold">Trade Compliance</h3>
+                <p className="text-center text-muted-foreground">
+                  Ensure your trades follow your predefined rules and strategies with compliance tracking.
+                </p>
+              </div>
+              <div className="flex flex-col items-center space-y-2 rounded-lg p-4 transition-all hover:bg-muted">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                  <Shield className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-xl font-bold">Secure & Private</h3>
+                <p className="text-center text-muted-foreground">
+                  Your trading data is encrypted and securely stored. Only you have access to your information.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t py-6 md:py-0">
+        <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+          <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
+            © {new Date().getFullYear()} Trading Journal. All rights reserved.
+          </p>
+          <div className="flex items-center gap-4">
+            <Link href="/terms" className="text-sm text-muted-foreground hover:underline">
+              Terms of Service
+            </Link>
+            <Link href="/privacy" className="text-sm text-muted-foreground hover:underline">
+              Privacy Policy
+            </Link>
+          </div>
         </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="glass-card animate-slide-in" style={{ animationDelay: "0ms" }}>
-          <CardHeader className="pb-2">
-            <CardDescription>Total P&L</CardDescription>
-            <CardTitle className="text-2xl profit-text">+$12,458.32</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <ArrowUpIcon className="h-4 w-4 text-[hsl(var(--profit))]" />
-              <span>+8.2% from last month</span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="glass-card animate-slide-in" style={{ animationDelay: "50ms" }}>
-          <CardHeader className="pb-2">
-            <CardDescription>Win Rate</CardDescription>
-            <CardTitle className="text-2xl">68.5%</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <ArrowUpIcon className="h-4 w-4 text-[hsl(var(--profit))]" />
-              <span>+3.5% from last month</span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="glass-card animate-slide-in" style={{ animationDelay: "100ms" }}>
-          <CardHeader className="pb-2">
-            <CardDescription>Profit Factor</CardDescription>
-            <CardTitle className="text-2xl">2.34</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <ArrowUpIcon className="h-4 w-4 text-[hsl(var(--profit))]" />
-              <span>+0.21 from last month</span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="glass-card animate-slide-in" style={{ animationDelay: "150ms" }}>
-          <CardHeader className="pb-2">
-            <CardDescription>Total Trades</CardDescription>
-            <CardTitle className="text-2xl">124</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <ArrowDownIcon className="h-4 w-4 text-[hsl(var(--loss))]" />
-              <span>-12 from last month</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-3">
-        <Card className="glass-card md:col-span-2 animate-slide-in" style={{ animationDelay: "200ms" }}>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Equity Curve</CardTitle>
-              <CardDescription>Your account growth over time</CardDescription>
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1">
-                  <span>30 Days</span>
-                  <ChevronDownIcon className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem>7 Days</DropdownMenuItem>
-                <DropdownMenuItem>30 Days</DropdownMenuItem>
-                <DropdownMenuItem>90 Days</DropdownMenuItem>
-                <DropdownMenuItem>1 Year</DropdownMenuItem>
-                <DropdownMenuItem>All Time</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </CardHeader>
-          <CardContent>
-            <EquityCurveChart />
-          </CardContent>
-        </Card>
-
-        <Card className="glass-card animate-slide-in" style={{ animationDelay: "250ms" }}>
-          <CardHeader>
-            <CardTitle>Win Rate by Setup</CardTitle>
-            <CardDescription>Performance by strategy</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <WinRateChart />
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs defaultValue="recent" className="animate-slide-in" style={{ animationDelay: "300ms" }}>
-        <div className="flex items-center justify-between">
-          <TabsList className="bg-secondary/30">
-            <TabsTrigger value="recent">Recent Trades</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-          </TabsList>
-          <Button variant="outline" size="sm" className="gap-1">
-            <FilterIcon className="h-4 w-4" />
-            <span>Filter</span>
-          </Button>
-        </div>
-        <TabsContent value="recent" className="mt-4">
-          <Card className="glass-card">
-            <CardContent className="p-0">
-              <RecentTradesTable />
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="performance" className="mt-4">
-          <Card className="glass-card">
-            <CardContent className="p-6">
-              <PerformanceMetrics />
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      </footer>
     </div>
   )
 }

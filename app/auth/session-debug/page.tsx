@@ -1,37 +1,24 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { supabase } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle, CheckCircle2, RefreshCw } from "lucide-react"
+import { useToast } from "@/components/ui/use-toast"
 
 export default function SessionDebugPage() {
-  const [session, setSession] = useState<any>(null)
+  const [sessionData, setSessionData] = useState<any>(null)
   const [backupAuth, setBackupAuth] = useState<any>(null)
-  const [cookies, setCookies] = useState<any>({})
+  const [cookies, setCookies] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const router = useRouter()
+  const { toast } = useToast()
 
   useEffect(() => {
-    async function checkSession() {
+    async function fetchSessionData() {
       try {
-        setLoading(true)
-        setError(null)
-
         // Get session from Supabase
-        const { data, error } = await supabase.auth.getSession()
-
-        if (error) {
-          throw error
-        }
-
-        setSession(data.session)
+        const { data } = await supabase.auth.getSession()
+        setSessionData(data)
 
         // Get backup auth from localStorage
         try {
@@ -40,155 +27,130 @@ export default function SessionDebugPage() {
             setBackupAuth(JSON.parse(backup))
           }
         } catch (e) {
-          console.error("Error getting backup auth:", e)
+          console.error("Could not get backup auth", e)
         }
 
-        // Parse cookies
+        // Get cookies
         const cookieObj: Record<string, string> = {}
         document.cookie.split(";").forEach((cookie) => {
           const [name, value] = cookie.trim().split("=")
-          if (name && value) {
-            cookieObj[name] = value
-          }
+          cookieObj[name] = value
         })
         setCookies(cookieObj)
-      } catch (err: any) {
-        console.error("Session check error:", err)
-        setError(err.message || "Failed to check session")
+      } catch (error) {
+        console.error("Error fetching session data:", error)
       } finally {
         setLoading(false)
       }
     }
 
-    checkSession()
-  }, [refreshKey])
+    fetchSessionData()
+  }, [])
 
-  const refreshSession = () => {
-    setRefreshKey((prev) => prev + 1)
-  }
-
-  const fixSession = async () => {
+  const refreshSession = async () => {
+    setLoading(true)
     try {
-      setLoading(true)
-
-      // Force refresh the session
-      await supabase.auth.refreshSession()
-
-      // Store backup auth
-      if (session?.user) {
-        localStorage.setItem(
-          "auth-backup",
-          JSON.stringify({
-            authenticated: true,
-            timestamp: Date.now(),
-            user: session.user.email,
-            userId: session.user.id,
-          }),
-        )
-      }
-
-      refreshSession()
-    } catch (err: any) {
-      setError(err.message || "Failed to fix session")
+      const { data } = await supabase.auth.refreshSession()
+      setSessionData(data)
+      toast({
+        title: "Session refreshed",
+        description: data.session ? "Session successfully refreshed" : "No active session to refresh",
+      })
+    } catch (error) {
+      console.error("Error refreshing session:", error)
     } finally {
       setLoading(false)
     }
   }
 
-  const clearSession = async () => {
+  const clearBackupAuth = () => {
     try {
-      setLoading(true)
-
-      // Sign out
-      await supabase.auth.signOut()
-
-      // Clear backup auth
       localStorage.removeItem("auth-backup")
-
-      // Clear cookies
-      document.cookie.split(";").forEach((c) => {
-        document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/")
+      document.cookie = "auth-backup=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+      setBackupAuth(null)
+      toast({
+        title: "Backup auth cleared",
+        description: "Backup authentication data has been removed",
       })
-
-      refreshSession()
-    } catch (err: any) {
-      setError(err.message || "Failed to clear session")
-    } finally {
-      setLoading(false)
+    } catch (e) {
+      console.error("Could not clear backup auth", e)
     }
   }
 
   return (
-    <div className="container mx-auto py-10 max-w-4xl">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Session Debug Tool</span>
-            <Button variant="outline" size="icon" onClick={refreshSession} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            </Button>
-          </CardTitle>
-          <CardDescription>Diagnose authentication and session issues</CardDescription>
-        </CardHeader>
+    <div className="container mx-auto py-8 max-w-4xl">
+      <h1 className="text-3xl font-bold mb-6">Session Debug</h1>
 
-        <CardContent>
-          {error && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Session Status</CardTitle>
+            <CardDescription>Current authentication session information</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="animate-pulse h-40 bg-muted rounded-md"></div>
+            ) : (
+              <>
+                <div className="mb-4">
+                  <h3 className="text-lg font-medium">Session:</h3>
+                  <pre className="bg-muted p-4 rounded-md overflow-auto max-h-60 text-sm">
+                    {JSON.stringify(sessionData, null, 2)}
+                  </pre>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={refreshSession}>Refresh Session</Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <Alert variant={session ? "default" : "destructive"} className="mb-4">
-            {session ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-            <AlertTitle>{session ? "Authenticated" : "Not Authenticated"}</AlertTitle>
-            <AlertDescription>
-              {session ? `Logged in as ${session.user?.email}` : "No active session found"}
-            </AlertDescription>
-          </Alert>
+        <Card>
+          <CardHeader>
+            <CardTitle>Backup Authentication</CardTitle>
+            <CardDescription>Fallback authentication data stored in localStorage</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="animate-pulse h-20 bg-muted rounded-md"></div>
+            ) : (
+              <>
+                <div className="mb-4">
+                  <h3 className="text-lg font-medium">Backup Auth:</h3>
+                  <pre className="bg-muted p-4 rounded-md overflow-auto max-h-40 text-sm">
+                    {backupAuth ? JSON.stringify(backupAuth, null, 2) : "No backup auth found"}
+                  </pre>
+                </div>
+                {backupAuth && (
+                  <Button variant="destructive" onClick={clearBackupAuth}>
+                    Clear Backup Auth
+                  </Button>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <Tabs defaultValue="session">
-            <TabsList className="mb-4">
-              <TabsTrigger value="session">Session</TabsTrigger>
-              <TabsTrigger value="backup">Backup Auth</TabsTrigger>
-              <TabsTrigger value="cookies">Cookies</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="session">
-              <pre className="bg-muted p-4 rounded-md overflow-auto max-h-96">
-                {JSON.stringify(session, null, 2) || "No session data"}
-              </pre>
-            </TabsContent>
-
-            <TabsContent value="backup">
-              <pre className="bg-muted p-4 rounded-md overflow-auto max-h-96">
-                {JSON.stringify(backupAuth, null, 2) || "No backup auth data"}
-              </pre>
-            </TabsContent>
-
-            <TabsContent value="cookies">
-              <pre className="bg-muted p-4 rounded-md overflow-auto max-h-96">
-                {JSON.stringify(cookies, null, 2) || "No cookies found"}
-              </pre>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-
-        <CardFooter className="flex justify-between">
-          <Button variant="outline" onClick={() => router.push("/auth/login")}>
-            Go to Login
-          </Button>
-          <div className="space-x-2">
-            <Button variant="secondary" onClick={fixSession} disabled={loading}>
-              Fix Session
-            </Button>
-            <Button variant="destructive" onClick={clearSession} disabled={loading}>
-              Clear Session
-            </Button>
-          </div>
-        </CardFooter>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Cookies</CardTitle>
+            <CardDescription>Authentication-related cookies</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="animate-pulse h-20 bg-muted rounded-md"></div>
+            ) : (
+              <div>
+                <h3 className="text-lg font-medium">Cookies:</h3>
+                <pre className="bg-muted p-4 rounded-md overflow-auto max-h-40 text-sm">
+                  {JSON.stringify(cookies, null, 2)}
+                </pre>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

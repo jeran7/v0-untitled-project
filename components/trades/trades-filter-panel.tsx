@@ -15,12 +15,16 @@ import { cn } from "@/lib/utils"
 import type { TradeFilters } from "@/hooks/use-trades"
 
 interface TradesFilterPanelProps {
-  filters: TradeFilters
-  onFilterChange: (filters: TradeFilters) => void
-  onFilterPreset: (preset: string) => void
+  filters?: TradeFilters
+  onFilterChange?: (filters: TradeFilters) => void
+  onFilterPreset?: (preset: string) => void
 }
 
-export function TradesFilterPanel({ filters, onFilterChange, onFilterPreset }: TradesFilterPanelProps) {
+export function TradesFilterPanel({
+  filters = {},
+  onFilterChange = () => {},
+  onFilterPreset = () => {},
+}: TradesFilterPanelProps) {
   const [localFilters, setLocalFilters] = useState<TradeFilters>(filters)
   const [pnlRange, setPnlRange] = useState<[number, number]>([-5000, 5000])
   const [selectedTags, setSelectedTags] = useState<string[]>([])

@@ -36,6 +36,13 @@ export const AuthService = {
               userId: data.session.user.id,
             }),
           )
+
+          // Also set a cookie for middleware
+          document.cookie = `auth-backup=${JSON.stringify({
+            authenticated: true,
+            timestamp: Date.now(),
+            userId: data.session.user.id,
+          })}; path=/; max-age=86400; SameSite=Lax;`
         } catch (e) {
           debugLog("Could not store auth backup", e)
         }
@@ -44,6 +51,21 @@ export const AuthService = {
       return data.session
     } catch (error) {
       debugLog("Exception getting session:", error)
+
+      // Try to get backup auth from localStorage
+      try {
+        const backup = localStorage.getItem("auth-backup")
+        if (backup) {
+          const data = JSON.parse(backup)
+          if (data.authenticated && Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+            debugLog("Using backup auth from localStorage")
+            return { user: { id: data.userId, email: data.user } } as any
+          }
+        }
+      } catch (e) {
+        debugLog("Could not get backup auth", e)
+      }
+
       return null
     }
   },

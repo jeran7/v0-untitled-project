@@ -55,11 +55,28 @@ export function TradesDataTable({
   const [sorting, setSorting] = useState<SortingState>([{ id: sortBy, desc: sortDirection === "desc" }])
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({})
 
-  // Update external selection state when row selection changes
+  // Initialize rowSelection based on selectedTrades prop
   useEffect(() => {
-    const selectedIds = Object.keys(rowSelection).filter((key) => rowSelection[key])
-    onSelectionChange(selectedIds)
-  }, [rowSelection, onSelectionChange])
+    const newRowSelection: Record<string, boolean> = {}
+    selectedTrades.forEach((id) => {
+      newRowSelection[id] = true
+    })
+    setRowSelection(newRowSelection)
+  }, [selectedTrades])
+
+  // Update external selection state when row selection changes
+  // But only when rowSelection actually changes and not on every render
+  useEffect(() => {
+    const selectedIds = Object.entries(rowSelection)
+      .filter(([_, selected]) => selected)
+      .map(([id]) => id)
+
+    // Only call onSelectionChange if the selection has actually changed
+    // This prevents infinite loops
+    if (JSON.stringify(selectedIds.sort()) !== JSON.stringify(selectedTrades.sort())) {
+      onSelectionChange(selectedIds)
+    }
+  }, [rowSelection, onSelectionChange, selectedTrades])
 
   // Update sorting state when external sort changes
   useEffect(() => {

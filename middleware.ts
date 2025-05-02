@@ -15,7 +15,7 @@ function createMiddlewareClient(request: NextRequest, response: NextResponse) {
 
   return createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
-      persistSession: true, // Changed to true to ensure session persistence
+      persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
     },
@@ -36,6 +36,8 @@ const publicRoutes = [
   "/auth/reset-password",
   "/auth/callback",
   "/auth/debug",
+  "/auth/session-debug",
+  "/auth/test",
 ]
 
 // Check if a path is public
@@ -59,6 +61,13 @@ function hasBackupAuth(request: NextRequest) {
   }
 }
 
+// Check if we're in a redirect loop
+function isInRedirectLoop(request: NextRequest) {
+  const url = new URL(request.url)
+  const redirectCount = Number.parseInt(url.searchParams.get("redirectCount") || "0", 10)
+  return redirectCount > 2 // Consider it a loop if redirected more than twice
+}
+
 export async function middleware(request: NextRequest) {
   try {
     // Create response to modify
@@ -66,6 +75,12 @@ export async function middleware(request: NextRequest) {
 
     // Get the pathname from the URL
     const { pathname } = request.nextUrl
+
+    // Check if we're in a redirect loop
+    if (isInRedirectLoop(request)) {
+      console.log("Detected redirect loop, bypassing auth check")
+      return NextResponse.next()
+    }
 
     // Skip middleware for static files, api routes, and public routes
     if (
@@ -75,6 +90,12 @@ export async function middleware(request: NextRequest) {
       pathname.includes(".") ||
       isPublicPath(pathname)
     ) {
+      return NextResponse.next()
+    }
+
+    // Check for backup auth in cookies first (faster)
+    if (hasBackupAuth(request)) {
+      console.log("Middleware: Using backup auth from cookies")
       return NextResponse.next()
     }
 
@@ -94,29 +115,23 @@ export async function middleware(request: NextRequest) {
         console.error("Middleware session error:", error.message)
       } else {
         session = data.session
-        console.log("Middleware session check:", session ? "Found session" : "No session")
       }
     } catch (error: any) {
       console.error("Error getting session in middleware:", error.message)
       // Continue with null session
     }
 
-    // Check if the current route is protected
-    const isProtectedRoute = !isPublicPath(pathname)
-
     // If user is not signed in and trying to access protected routes
-    if (!session && isProtectedRoute) {
-      // Check for backup auth
-      if (hasBackupAuth(request)) {
-        console.log("Middleware: Using backup auth for protected route")
-        return NextResponse.next()
-      }
-
+    if (!session && !hasBackupAuth(request) && !isPublicPath(pathname)) {
       console.log("Middleware: User is not signed in and trying to access protected route, redirecting to login")
 
       // Store the original URL to redirect back after login
       const redirectUrl = new URL("/auth/login", request.url)
       redirectUrl.searchParams.set("redirect", pathname)
+
+      // Add redirect count to detect loops
+      const currentCount = Number.parseInt(request.nextUrl.searchParams.get("redirectCount") || "0", 10)
+      redirectUrl.searchParams.set("redirectCount", (currentCount + 1).toString())
 
       return NextResponse.redirect(redirectUrl)
     }
@@ -136,6 +151,7 @@ export async function middleware(request: NextRequest) {
         httpOnly: false, // Allow JavaScript access
         maxAge: 60 * 60 * 24, // 1 day
         path: "/",
+        sameSite: "lax",
       })
     }
 
