@@ -1,33 +1,84 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/components/auth/auth-provider"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { BarChart3, BookOpen, LineChart, Plus, TrendingUp } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { EquityCurveChart } from "@/components/equity-curve-chart"
 import { WinRateChart } from "@/components/win-rate-chart"
 import { RecentTradesTable } from "@/components/recent-trades-table"
 import { PerformanceMetrics } from "@/components/performance-metrics"
 import { TradeAnalysis } from "@/components/trade-analysis"
-import { UsageCard } from "@/components/usage-card"
+import { supabase } from "@/lib/supabase/client"
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { user, profile, isLoading, auth } = useAuth()
+  const [isLoading, setIsLoading] = useState(true)
+  const [user, setUser] = useState<any>(null)
+  const [profile, setProfile] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Redirect to login if not authenticated
+  // Check authentication and fetch user data
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push("/auth/login")
+    async function checkAuth() {
+      try {
+        console.log("Checking authentication status...")
+
+        // Get current session
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
+
+        if (sessionError) {
+          console.error("Session error:", sessionError)
+          throw sessionError
+        }
+
+        if (!session) {
+          console.log("No active session, redirecting to login")
+          router.push("/auth/login")
+          return
+        }
+
+        console.log("Session found, user is authenticated")
+        setUser(session.user)
+
+        // Fetch user profile if needed
+        if (session.user) {
+          try {
+            const { data: profileData, error: profileError } = await supabase
+              .from("user_profiles")
+              .select("*")
+              .eq("user_id", session.user.id)
+              .single()
+
+            if (profileError) {
+              console.warn("Could not fetch profile:", profileError)
+            } else {
+              console.log("Profile fetched successfully")
+              setProfile(profileData)
+            }
+          } catch (profileFetchError) {
+            console.error("Profile fetch error:", profileFetchError)
+          }
+        }
+      } catch (err) {
+        console.error("Auth check error:", err)
+        setError("Failed to verify authentication status")
+      } finally {
+        setIsLoading(false)
+      }
     }
-  }, [isLoading, user, router])
+
+    checkAuth()
+  }, [router])
 
   // Loading state
-  if (isLoading || !user) {
+  if (isLoading) {
     return (
       <div className="container py-10 animate-in">
         <div className="space-y-8">
@@ -53,6 +104,44 @@ export default function DashboardPage() {
     )
   }
 
+  // Error state
+  if (error) {
+    return (
+      <div className="container py-10">
+        <Card>
+          <CardHeader>
+            <CardTitle>Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>{error}</p>
+            <Button onClick={() => router.push("/auth/login")} className="mt-4">
+              Return to Login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // No user state (should not happen due to redirect in useEffect)
+  if (!user) {
+    return (
+      <div className="container py-10">
+        <Card>
+          <CardHeader>
+            <CardTitle>Authentication Required</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>Please log in to view your dashboard.</p>
+            <Button onClick={() => router.push("/auth/login")} className="mt-4">
+              Go to Login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="container py-10 animate-in">
       <div className="space-y-8">
@@ -68,24 +157,6 @@ export default function DashboardPage() {
             New Trade
           </Button>
         </div>
-
-        {/* Usage metrics section */}
-        {user && (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            <UsageCard
-              title="Trades Used"
-              current={auth?.usage?.length ? auth.getRemainingUsage("trades") : 0}
-              max={auth?.subscriptionPlan?.trade_limit || 0}
-              percentage={auth?.usage?.length ? auth.getUsagePercentage("trades") : 0}
-            />
-            <UsageCard
-              title="AI Queries"
-              current={auth?.usage?.length ? auth.getRemainingUsage("ai_queries") : 0}
-              max={auth?.subscriptionPlan?.ai_query_limit || 0}
-              percentage={auth?.usage?.length ? auth.getUsagePercentage("ai_queries") : 0}
-            />
-          </div>
-        )}
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="glass-card">

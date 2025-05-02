@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import Sidebar from "@/components/sidebar"
 import { AuthProvider } from "@/components/auth/auth-provider"
 import { Toaster } from "@/components/ui/toaster"
+import { NavigationErrorRecovery } from "@/components/navigation-error-recovery"
 
 const fontSans = FontSans({
   subsets: ["latin"],
@@ -33,6 +34,7 @@ export default function RootLayout({
               <Sidebar />
               <main className="flex-1 overflow-auto">{children}</main>
             </div>
+            <NavigationErrorRecovery />
             <Toaster />
           </AuthProvider>
         </ThemeProvider>

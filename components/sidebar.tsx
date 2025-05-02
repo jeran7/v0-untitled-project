@@ -19,19 +19,41 @@ import {
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-// import { useAuth } from "../components/auth/auth-provider"
-
-// Temporary auth hook until path issues are resolved
-function useAuth() {
-  return {
-    user: { email: "user@example.com" },
-    signOut: () => console.log("Sign out clicked"),
-  }
-}
+import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase/client"
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const { user, signOut } = useAuth()
+  const [user, setUser] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Fetch user data
+  useEffect(() => {
+    async function getUser() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        setUser(session?.user || null)
+      } catch (error) {
+        console.error("Error fetching user in sidebar:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    getUser()
+  }, [])
+
+  // Safe sign out function
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+      window.location.href = "/auth/login"
+    } catch (error) {
+      console.error("Error signing out:", error)
+    }
+  }
 
   const routes = [
     {
@@ -161,7 +183,7 @@ export default function Sidebar() {
                 <p className="text-xs text-muted-foreground">Pro Plan</p>
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={signOut}>
+            <Button variant="ghost" size="icon" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
             </Button>
           </div>
