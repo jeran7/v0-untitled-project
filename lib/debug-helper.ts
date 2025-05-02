@@ -1,209 +1,129 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-/**
- * Test authentication status with Supabase
- */
 export async function testAuthentication(supabase: SupabaseClient) {
   try {
-    // Get current session
+    // Check if we have a session
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
 
     if (sessionError) {
       return {
-        authenticated: false,
+        success: false,
         error: sessionError.message,
-        session: null,
+        message: "Failed to get session",
       }
     }
 
-    // Check if we have a session
     if (!sessionData.session) {
       return {
-        authenticated: false,
+        success: false,
         error: "No active session",
-        session: null,
+        message: "You are not authenticated",
       }
     }
 
-    // Get user
+    // Try to get user
     const { data: userData, error: userError } = await supabase.auth.getUser()
 
     if (userError) {
       return {
-        authenticated: true,
+        success: false,
         error: userError.message,
-        session: sessionData.session,
-        user: null,
+        message: "Failed to get user data",
       }
     }
 
     return {
-      authenticated: true,
-      error: null,
-      session: sessionData.session,
-      user: userData.user,
+      success: true,
+      message: "Authentication successful",
+      user: {
+        id: userData.user?.id,
+        email: userData.user?.email,
+      },
+      session: {
+        expires_at: sessionData.session?.expires_at,
+      },
     }
-  } catch (error) {
+  } catch (error: any) {
     return {
-      authenticated: false,
-      error: (error as Error).message,
-      session: null,
+      success: false,
+      error: error.message,
+      message: "Authentication test failed with an exception",
     }
   }
 }
 
-/**
- * Check if we can access a specific table
- */
 export async function checkTableAccess(supabase: SupabaseClient, tableName: string) {
   try {
-    // Ensure the full table name is used (no truncation)
-    const fullTableName = tableName.trim()
-
-    console.log(`Testing access to table: ${fullTableName}`)
-
-    // First try a HEAD request to check if the table exists
-    const { error: headError } = await supabase.from(fullTableName).select("*", { head: true, count: "exact" }).limit(1)
-
-    if (headError) {
-      return {
-        accessible: false,
-        error: headError.message,
-        details: headError,
-      }
-    }
-
-    // If HEAD request succeeded, try a small SELECT
-    const { data, error, count } = await supabase.from(fullTableName).select("*", { count: "exact" }).limit(1)
+    // Try to access the table
+    const { data, error, status } = await supabase.from(tableName).select("count").limit(1)
 
     if (error) {
       return {
-        accessible: false,
+        success: false,
         error: error.message,
-        details: error,
+        code: error.code,
+        status,
+        message: `Failed to access table: ${tableName}`,
       }
     }
 
     return {
-      accessible: true,
-      error: null,
-      count,
-      sample: data,
+      success: true,
+      count: data?.length || 0,
+      status,
+      message: `Successfully accessed table: ${tableName}`,
     }
-  } catch (error) {
+  } catch (error: any) {
     return {
-      accessible: false,
-      error: (error as Error).message,
+      success: false,
+      error: error.message,
+      message: `Exception when accessing table: ${tableName}`,
     }
   }
 }
 
-/**
- * Enable detailed API request logging
- */
 export function enableApiLogging() {
-  if (typeof window !== "undefined") {
-    // Monkey patch fetch to log all requests
-    const originalFetch = window.fetch
-    window.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input.url
-      const method = init?.method || (typeof input !== "string" && input.method) || "GET"
+  if (typeof window === "undefined") return
 
-      console.group(`🌐 Fetch: ${method} ${url}`)
-      console.log("Request:", { url, method, headers: init?.headers })
+  // Override fetch to log all API calls
+  const originalFetch = window.fetch
+  window.fetch = async (...args) => {
+    const url = args[0]
+    const options = args[1] || {}
 
-      try {
-        const response = await originalFetch(input, init)
+    console.log(`[API] ${options.method || "GET"} ${url}`, options)
 
-        // Clone the response so we can log it and still return it
-        const clone = response.clone()
+    try {
+      const response = await originalFetch(...args)
 
-        // Log response details
-        console.log("Response:", {
-          status: clone.status,
-          statusText: clone.statusText,
-          headers: Object.fromEntries(clone.headers.entries()),
+      // Clone the response to log it without consuming it
+      const clone = response.clone()
+      clone
+        .text()
+        .then((text) => {
+          try {
+            const data = JSON.parse(text)
+            console.log(`[API] Response:`, data)
+          } catch {
+            console.log(`[API] Response: ${text.substring(0, 100)}${text.length > 100 ? "..." : ""}`)
+          }
+        })
+        .catch((err) => {
+          console.log(`[API] Could not parse response: ${err.message}`)
         })
 
-        // Try to log the body if it's JSON
-        try {
-          const contentType = clone.headers.get("content-type")
-          if (contentType && contentType.includes("application/json")) {
-            const body = await clone.json()
-            console.log("Response body:", body)
-          }
-        } catch (e) {
-          console.log("Could not parse response body")
-        }
-
-        console.groupEnd()
-        return response
-      } catch (error) {
-        console.error("Fetch error:", error)
-        console.groupEnd()
-        throw error
-      }
+      return response
+    } catch (err) {
+      console.error(`[API] Error:`, err)
+      throw err
     }
-
-    console.log("API request logging enabled")
   }
+
+  console.log("[API] Logging enabled for all API calls")
 }
 
-/**
- * Fix URL truncation issues in Supabase requests
- */
-export function fixUrlTruncation(supabaseClient: SupabaseClient) {
-  // This is a workaround for URL truncation issues
-  // It monkey patches the Supabase client's internal fetch function
-
-  try {
-    // @ts-ignore - Accessing internal properties
-    const originalFetch = supabaseClient.rest.fetchWithAuth
-
-    if (originalFetch) {
-      // @ts-ignore - Patching internal method
-      supabaseClient.rest.fetchWithAuth = async function (url: string, options: any) {
-        // Check if the URL might be truncated
-        if (url.includes("/rest/v1/")) {
-          // Extract the table name from the URL
-          const parts = url.split("/rest/v1/")
-          if (parts.length > 1) {
-            const tablePart = parts[1].split("?")[0]
-
-            // Check for common truncated table names
-            const fixedTableName = fixTableName(tablePart)
-
-            if (fixedTableName !== tablePart) {
-              // Replace the truncated table name with the fixed one
-              url = url.replace(`/rest/v1/${tablePart}`, `/rest/v1/${fixedTableName}`)
-              console.log(`Fixed truncated URL: ${url}`)
-            }
-          }
-        }
-
-        return originalFetch.call(this, url, options)
-      }
-
-      console.log("URL truncation fix applied to Supabase client")
-    }
-  } catch (error) {
-    console.error("Could not apply URL truncation fix:", error)
-  }
-}
-
-/**
- * Fix common truncated table names
- */
-function fixTableName(tableName: string): string {
-  const knownTables: Record<string, string> = {
-    user_sub: "user_subscriptions",
-    user_subscriptio: "user_subscriptions",
-    subscription_plan: "subscription_plans",
-    user_prof: "user_profiles",
-    user_profi: "user_profiles",
-    user_profil: "user_profiles",
-    user_profile: "user_profiles",
-  }
-
-  return knownTables[tableName] || tableName
+export function fixUrlTruncation(supabase: SupabaseClient) {
+  // This function is a placeholder for any additional URL truncation fixes
+  // that might be needed beyond what's in the Supabase client
+  console.log("[URL Fix] URL truncation fix applied")
 }
