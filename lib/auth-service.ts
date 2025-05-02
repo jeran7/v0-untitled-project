@@ -1,15 +1,31 @@
 import { supabase } from "./supabase/client"
 
+// Debug function that works even if console is broken
+function debugLog(message: string, data?: any) {
+  try {
+    console.log(`[Auth Service] ${message}`, data || "")
+  } catch (e) {
+    // Silent fallback if console is broken
+  }
+}
+
 // Simple service to handle authentication without complex state management
 export const AuthService = {
   // Get current session
   getSession: async () => {
     try {
+      debugLog("Getting session...")
       const { data, error } = await supabase.auth.getSession()
-      if (error) throw error
+
+      if (error) {
+        debugLog("Error getting session:", error)
+        throw error
+      }
+
+      debugLog("Session result:", { hasSession: !!data.session })
       return data.session
     } catch (error) {
-      console.error("Error getting session:", error)
+      debugLog("Exception getting session:", error)
       return null
     }
   },
@@ -17,10 +33,13 @@ export const AuthService = {
   // Check if user is authenticated
   isAuthenticated: async () => {
     try {
+      debugLog("Checking authentication...")
       const session = await AuthService.getSession()
-      return !!session
+      const result = !!session
+      debugLog(`Authentication check result: ${result ? "Authenticated" : "Not authenticated"}`)
+      return result
     } catch (error) {
-      console.error("Error checking authentication:", error)
+      debugLog("Error checking authentication:", error)
       return false
     }
   },
@@ -28,9 +47,11 @@ export const AuthService = {
   // Sign in with email and password
   signIn: async (email: string, password: string) => {
     try {
+      debugLog(`Attempting to sign in with: ${email}`)
+
       // Development bypass for testing (remove in production)
       if (process.env.NODE_ENV === "development" && (email === "demo@example.com" || email.includes("demo"))) {
-        console.log("Using development bypass authentication")
+        debugLog("Using development bypass authentication")
         return {
           success: true,
           user: {
@@ -46,9 +67,10 @@ export const AuthService = {
       }
 
       // First sign out to clear any existing session
+      debugLog("Signing out existing session...")
       await supabase.auth.signOut()
 
-      console.log("Attempting Supabase authentication...")
+      debugLog("Attempting Supabase authentication...")
 
       // Sign in with new credentials
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -57,11 +79,11 @@ export const AuthService = {
       })
 
       if (error) {
-        console.error("Supabase auth error details:", error)
+        debugLog("Supabase auth error:", error)
         throw error
       }
 
-      console.log("Authentication successful:", data.user?.email)
+      debugLog("Authentication successful:", data.user?.email)
 
       // Store a backup of authentication state
       if (data.session) {
@@ -75,14 +97,15 @@ export const AuthService = {
               userId: data.user.id,
             }),
           )
+          debugLog("Stored auth backup")
         } catch (e) {
-          console.warn("Could not store auth backup", e)
+          debugLog("Could not store auth backup", e)
         }
       }
 
       return { success: true, user: data.user, session: data.session }
     } catch (error: any) {
-      console.error("Sign in error:", error)
+      debugLog("Sign in error:", error)
 
       // Provide more specific error messages
       if (error.message?.includes("Invalid login credentials")) {
@@ -101,19 +124,25 @@ export const AuthService = {
   // Sign out
   signOut: async () => {
     try {
+      debugLog("Signing out...")
       const { error } = await supabase.auth.signOut()
-      if (error) throw error
+
+      if (error) {
+        debugLog("Sign out error:", error)
+        throw error
+      }
 
       // Clear backup auth state
       try {
         localStorage.removeItem("auth-backup")
+        debugLog("Cleared auth backup")
       } catch (e) {
-        console.warn("Could not clear auth backup", e)
+        debugLog("Could not clear auth backup", e)
       }
 
       return { success: true }
     } catch (error: any) {
-      console.error("Sign out error:", error)
+      debugLog("Sign out error:", error)
       return { success: false, error: error.message }
     }
   },
@@ -121,8 +150,13 @@ export const AuthService = {
   // Get user profile from backup if session fails
   getBackupAuthState: () => {
     try {
+      debugLog("Getting backup auth state...")
       const backup = localStorage.getItem("auth-backup")
-      if (!backup) return null
+
+      if (!backup) {
+        debugLog("No backup auth found")
+        return null
+      }
 
       const data = JSON.parse(backup)
 
@@ -130,12 +164,14 @@ export const AuthService = {
       const isRecent = Date.now() - data.timestamp < 24 * 60 * 60 * 1000
 
       if (data.authenticated && isRecent) {
+        debugLog("Found valid backup auth")
         return { authenticated: true, user: data.user, userId: data.userId }
       }
 
+      debugLog("Backup auth expired or invalid")
       return null
     } catch (e) {
-      console.warn("Could not get auth backup", e)
+      debugLog("Could not get auth backup", e)
       return null
     }
   },
