@@ -15,7 +15,9 @@ function createMiddlewareClient(request: NextRequest, response: NextResponse) {
 
   return createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
-      persistSession: false,
+      persistSession: true, // Changed to true to ensure session persistence
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
     global: {
       headers: {
@@ -52,6 +54,7 @@ function hasBackupAuth(request: NextRequest) {
 
     return data.authenticated && isRecent
   } catch (e) {
+    console.error("Error checking backup auth:", e)
     return false
   }
 }
@@ -85,10 +88,16 @@ export async function middleware(request: NextRequest) {
     // Try to get the session
     let session = null
     try {
-      const { data } = await supabase.auth.getSession()
-      session = data.session
-    } catch (error) {
-      console.error("Error getting session in middleware:", error)
+      const { data, error } = await supabase.auth.getSession()
+
+      if (error) {
+        console.error("Middleware session error:", error.message)
+      } else {
+        session = data.session
+        console.log("Middleware session check:", session ? "Found session" : "No session")
+      }
+    } catch (error: any) {
+      console.error("Error getting session in middleware:", error.message)
       // Continue with null session
     }
 
@@ -115,12 +124,25 @@ export async function middleware(request: NextRequest) {
     // Add auth session to response headers for server components
     if (session) {
       response.headers.set("x-supabase-auth", "authenticated")
+
+      // Set a cookie to help with auth persistence
+      const authCookie = {
+        authenticated: true,
+        timestamp: Date.now(),
+        userId: session.user.id,
+      }
+
+      response.cookies.set("auth-backup", JSON.stringify(authCookie), {
+        httpOnly: false, // Allow JavaScript access
+        maxAge: 60 * 60 * 24, // 1 day
+        path: "/",
+      })
     }
 
     // Allow the request to continue
     return response
-  } catch (error) {
-    console.error("Middleware error:", error)
+  } catch (error: any) {
+    console.error("Middleware error:", error.message)
 
     // In case of error, allow the request to continue to avoid blocking the user
     return NextResponse.next()

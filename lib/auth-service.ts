@@ -23,6 +23,24 @@ export const AuthService = {
       }
 
       debugLog("Session result:", { hasSession: !!data.session })
+
+      // Store session in localStorage as backup
+      if (data.session) {
+        try {
+          localStorage.setItem(
+            "auth-backup",
+            JSON.stringify({
+              authenticated: true,
+              timestamp: Date.now(),
+              user: data.session.user.email,
+              userId: data.session.user.id,
+            }),
+          )
+        } catch (e) {
+          debugLog("Could not store auth backup", e)
+        }
+      }
+
       return data.session
     } catch (error) {
       debugLog("Exception getting session:", error)
@@ -36,6 +54,20 @@ export const AuthService = {
       debugLog("Checking authentication...")
       const session = await AuthService.getSession()
       const result = !!session
+
+      // If no session, try to refresh it
+      if (!result) {
+        try {
+          debugLog("No session found, attempting to refresh...")
+          const { data } = await supabase.auth.refreshSession()
+          const refreshResult = !!data.session
+          debugLog(`Session refresh result: ${refreshResult ? "Success" : "Failed"}`)
+          return refreshResult
+        } catch (e) {
+          debugLog("Error refreshing session:", e)
+        }
+      }
+
       debugLog(`Authentication check result: ${result ? "Authenticated" : "Not authenticated"}`)
       return result
     } catch (error) {
@@ -98,6 +130,13 @@ export const AuthService = {
             }),
           )
           debugLog("Stored auth backup")
+
+          // Also set a cookie for middleware
+          document.cookie = `auth-backup=${JSON.stringify({
+            authenticated: true,
+            timestamp: Date.now(),
+            userId: data.user.id,
+          })}; path=/; max-age=86400;`
         } catch (e) {
           debugLog("Could not store auth backup", e)
         }
@@ -135,6 +174,7 @@ export const AuthService = {
       // Clear backup auth state
       try {
         localStorage.removeItem("auth-backup")
+        document.cookie = "auth-backup=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
         debugLog("Cleared auth backup")
       } catch (e) {
         debugLog("Could not clear auth backup", e)
@@ -173,6 +213,25 @@ export const AuthService = {
     } catch (e) {
       debugLog("Could not get auth backup", e)
       return null
+    }
+  },
+
+  // Force refresh the session
+  refreshSession: async () => {
+    try {
+      debugLog("Forcing session refresh...")
+      const { data, error } = await supabase.auth.refreshSession()
+
+      if (error) {
+        debugLog("Session refresh error:", error)
+        throw error
+      }
+
+      debugLog("Session refresh result:", { hasSession: !!data.session })
+      return { success: true, session: data.session }
+    } catch (error: any) {
+      debugLog("Session refresh exception:", error)
+      return { success: false, error: error.message }
     }
   },
 }
