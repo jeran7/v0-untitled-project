@@ -1,7 +1,16 @@
 import { v4 as uuidv4 } from "uuid"
 import type { ProcessedTransaction, CompleteTrade, ImportSummary } from "@/types/import"
 
+// Add debug logging
+const debugLog = (message: string, data?: any) => {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[Trade Pairing] ${message}`, data)
+  }
+}
+
 export function pairTrades(transactions: ProcessedTransaction[]): CompleteTrade[] {
+  debugLog(`Starting trade pairing with ${transactions.length} transactions`)
+
   // Sort transactions by date
   const sortedTransactions = [...transactions].sort((a, b) => a.activityDate.getTime() - b.activityDate.getTime())
 
@@ -56,6 +65,7 @@ export function pairTrades(transactions: ProcessedTransaction[]): CompleteTrade[
     }
   }
 
+  debugLog(`Paired ${trades.length} trades`)
   return trades
 }
 
@@ -165,6 +175,7 @@ function pairStockTrades(transactions: ProcessedTransaction[], symbol: string): 
 }
 
 function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string): CompleteTrade[] {
+  debugLog(`Pairing option trades for ${symbol} with ${transactions.length} transactions`)
   const trades: CompleteTrade[] = []
 
   // First, check if we have any option transactions
@@ -187,6 +198,10 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
   )
 
   const oexpTransactions = transactions.filter((t) => t.transCode === "OEXP")
+
+  debugLog(
+    `Found ${btoTransactions.length} BTO, ${stcTransactions.length} STC, and ${oexpTransactions.length} OEXP transactions`,
+  )
 
   // If we have no BTO transactions, we can't create trades
   if (btoTransactions.length === 0) {
@@ -216,13 +231,32 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
     return trades
   }
 
+  // Create a map to track remaining quantities for each BTO transaction
+  const btoRemainingQuantities = new Map<number, number>()
+
+  // Initialize the map with the original quantities
+  btoTransactions.forEach((bto) => {
+    btoRemainingQuantities.set(bto.rowIndex, Math.abs(bto.quantity))
+  })
+
   // Process each BTO transaction
   for (const bto of btoTransactions) {
-    let remainingBtoQuantity = Math.abs(bto.quantity)
+    debugLog(`Processing BTO transaction ${bto.rowIndex} with quantity ${Math.abs(bto.quantity)}`)
+
+    // Get the remaining quantity for this BTO
+    let remainingBtoQuantity = btoRemainingQuantities.get(bto.rowIndex) || 0
+
+    // If this BTO is already fully matched, skip it
+    if (remainingBtoQuantity <= 0) {
+      debugLog(`BTO ${bto.rowIndex} is already fully matched, skipping`)
+      continue
+    }
+
     const relatedTransactions = [bto]
     let totalProceeds = 0
     let lastExitDate: Date | null = null
     let fees = 0
+    let matchedQuantity = 0
 
     // Find matching STC transactions
     const matchingStc = stcTransactions.filter(
@@ -233,6 +267,8 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
         stc.optionDetails?.expirationDate.getTime() === bto.optionDetails?.expirationDate.getTime(),
     )
 
+    debugLog(`Found ${matchingStc.length} matching STC transactions for BTO ${bto.rowIndex}`)
+
     // Match STC transactions to this BTO
     for (const stc of matchingStc) {
       if (remainingBtoQuantity <= 0) break
@@ -240,12 +276,16 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
       const stcQuantity = Math.abs(stc.quantity)
       const quantityToUse = Math.min(remainingBtoQuantity, stcQuantity)
 
+      debugLog(`Matching STC ${stc.rowIndex} with quantity ${stcQuantity}, using ${quantityToUse}`)
+
       // Mark this STC as used
       stc.tradeId = bto.rowIndex.toString()
       relatedTransactions.push(stc)
 
       // Update remaining quantity
       remainingBtoQuantity -= quantityToUse
+      btoRemainingQuantities.set(bto.rowIndex, remainingBtoQuantity)
+      matchedQuantity += quantityToUse
 
       // Track proceeds and exit date
       totalProceeds += Math.abs(stc.amount) * (quantityToUse / stcQuantity)
@@ -268,23 +308,34 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
       )
 
       if (matchingOexp) {
+        debugLog(`Found matching OEXP transaction for remaining quantity ${remainingBtoQuantity}`)
+
         // Mark this OEXP as used
         matchingOexp.tradeId = bto.rowIndex.toString()
         relatedTransactions.push(matchingOexp)
 
         // Update exit date
         lastExitDate = matchingOexp.activityDate
+
+        // This is an expired option, so the remaining quantity is considered lost
+        matchedQuantity += remainingBtoQuantity
+        remainingBtoQuantity = 0
+        btoRemainingQuantities.set(bto.rowIndex, 0)
       }
     }
 
     // Calculate cost basis
     const costBasis = Math.abs(bto.amount)
-    const quantity = Math.abs(bto.quantity) - remainingBtoQuantity
+    const quantity = matchedQuantity
 
     // If we closed at least some of the position
     if (quantity > 0 && lastExitDate) {
       // Calculate profit/loss
       const profitLoss = totalProceeds - costBasis * (quantity / Math.abs(bto.quantity))
+
+      // Determine status - if we have an expiration and it's past the current date
+      const isExpired = relatedTransactions.some((t) => t.transCode === "OEXP")
+      const status = isExpired ? "expired" : "closed"
 
       // Create a trade
       const trade: CompleteTrade = {
@@ -294,44 +345,60 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
         entryDate: bto.activityDate,
         exitDate: lastExitDate,
         duration: Math.round((lastExitDate.getTime() - bto.activityDate.getTime()) / (1000 * 60 * 60 * 24)),
-        entryPrice: costBasis / Math.abs(bto.quantity),
-        exitPrice: totalProceeds / quantity,
+        entryPrice: bto.price, // Use the per-contract price directly
+        exitPrice: totalProceeds / quantity, // Calculate per-contract exit price
         quantity,
         profitLoss,
         profitLossPercent: (profitLoss / (costBasis * (quantity / Math.abs(bto.quantity)))) * 100,
-        status: "closed",
+        status,
         transactions: relatedTransactions,
         fees,
         optionDetails: bto.optionDetails,
       }
 
       trades.push(trade)
+      debugLog(`Created ${status} trade with quantity ${quantity} and P&L ${profitLoss}`)
     }
 
     // If we still have an open position
     if (remainingBtoQuantity > 0) {
+      // Check if the option has expired (current date is past expiration)
+      const now = new Date()
+      const isExpired = bto.optionDetails && bto.optionDetails.expirationDate < now
+
       const trade: CompleteTrade = {
         id: uuidv4(),
         symbol,
         assetType: "option",
         entryDate: bto.activityDate,
-        entryPrice: costBasis / Math.abs(bto.quantity),
+        entryPrice: bto.price, // Use the per-contract price directly
         quantity: remainingBtoQuantity,
-        profitLoss: 0,
-        profitLossPercent: 0,
-        status: "open",
+        profitLoss: isExpired ? -costBasis * (remainingBtoQuantity / Math.abs(bto.quantity)) : 0,
+        profitLossPercent: isExpired ? -100 : 0,
+        status: isExpired ? "expired" : "open",
         transactions: [bto],
         fees: 0,
         optionDetails: bto.optionDetails,
       }
 
+      if (isExpired) {
+        trade.exitDate = bto.optionDetails!.expirationDate
+        trade.duration = Math.round(
+          (bto.optionDetails!.expirationDate.getTime() - bto.activityDate.getTime()) / (1000 * 60 * 60 * 24),
+        )
+        trade.exitPrice = 0
+      }
+
       trades.push(trade)
+      debugLog(`Created ${trade.status} trade with remaining quantity ${remainingBtoQuantity}`)
     }
   }
 
   // Handle any remaining STC transactions that weren't matched
   const unmatchedStc = stcTransactions.filter((stc) => !stc.tradeId)
   for (const stc of unmatchedStc) {
+    debugLog(`Processing unmatched STC transaction ${stc.rowIndex}`)
+
     // Create a trade with estimated entry data
     const trade: CompleteTrade = {
       id: uuidv4(),
@@ -351,6 +418,7 @@ function pairOptionTrades(transactions: ProcessedTransaction[], symbol: string):
       optionDetails: stc.optionDetails,
     }
     trades.push(trade)
+    debugLog(`Created estimated trade for unmatched STC with quantity ${Math.abs(stc.quantity)}`)
   }
 
   return trades

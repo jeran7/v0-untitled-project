@@ -9,11 +9,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import type { ProcessedTransaction, CompleteTrade, ImportSummary, ImportConfig } from "@/types/import"
+import { Button } from "@/components/ui/button"
 
 export default function TransactionReviewPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const importId = searchParams.get("id")
+  const sessionId = searchParams.get("sessionId")
 
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,8 +45,48 @@ export default function TransactionReviewPage() {
         }
 
         const data = JSON.parse(storedData)
-        setTransactions(data.transactions || [])
-        setTrades(data.trades || [])
+        console.log("Retrieved import data:", data)
+
+        // Ensure dates are properly parsed as Date objects
+        const processedTransactions = (data.transactions || []).map((t: any) => ({
+          ...t,
+          activityDate: new Date(t.activityDate),
+          processDate: new Date(t.processDate),
+          settleDate: new Date(t.settleDate),
+          optionDetails: t.optionDetails
+            ? {
+                ...t.optionDetails,
+                expirationDate: new Date(t.optionDetails.expirationDate),
+              }
+            : undefined,
+        }))
+
+        const processedTrades = (data.trades || []).map((t: any) => ({
+          ...t,
+          entryDate: new Date(t.entryDate),
+          exitDate: t.exitDate ? new Date(t.exitDate) : undefined,
+          optionDetails: t.optionDetails
+            ? {
+                ...t.optionDetails,
+                expirationDate: new Date(t.optionDetails.expirationDate),
+              }
+            : undefined,
+          transactions: (t.transactions || []).map((tx: any) => ({
+            ...tx,
+            activityDate: new Date(tx.activityDate),
+            processDate: new Date(tx.processDate),
+            settleDate: new Date(tx.settleDate),
+            optionDetails: tx.optionDetails
+              ? {
+                  ...tx.optionDetails,
+                  expirationDate: new Date(tx.optionDetails.expirationDate),
+                }
+              : undefined,
+          })),
+        }))
+
+        setTransactions(processedTransactions)
+        setTrades(processedTrades)
         setSummary(data.summary || null)
 
         setIsLoading(false)
@@ -118,16 +160,41 @@ export default function TransactionReviewPage() {
     )
   }
 
+  const handleFinishImport = async () => {
+    router.push("/trades")
+  }
+
   return (
-    <div className="container py-8 max-w-7xl animate-in">
-      <h1 className="text-3xl font-bold mb-6">Transaction Review</h1>
+    <div className="container mx-auto px-4 py-8">
+      <h1 className="text-2xl font-bold mb-6">Review Imported Transactions</h1>
       <TransactionReview
         transactions={transactions}
         trades={trades}
         summary={summary}
         onBack={handleBack}
         onImport={handleImport}
+        sessionId={sessionId}
       />
+      <div className="mt-8 flex justify-between">
+        <Button variant="outline" onClick={() => router.push("/import")}>
+          Back to Import
+        </Button>
+        <Button onClick={handleFinishImport}>Finish Import</Button>
+      </div>
+      {process.env.NODE_ENV === "development" && (
+        <div className="mt-8 p-4 border border-gray-700 rounded-md">
+          <h3 className="text-lg font-medium mb-2">Debug Information</h3>
+          <p>Session ID: {sessionId || "Not provided"}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => console.log("Current session data:", sessionId)}
+            className="mt-2"
+          >
+            Log Session Data
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

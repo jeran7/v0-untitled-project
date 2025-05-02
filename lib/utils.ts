@@ -30,8 +30,10 @@ export function formatPercent(value: number): string {
 
 /**
  * Format a date safely, handling string dates, invalid dates, and null/undefined values
+ * @param date The date to format
+ * @param format Optional format string: 'MM/dd/yy', 'MMM d', etc.
  */
-export function formatDate(date: Date | string | null | undefined): string {
+export function formatDate(date: Date | string | null | undefined, format?: string): string {
   if (!date) return "N/A"
 
   try {
@@ -43,6 +45,30 @@ export function formatDate(date: Date | string | null | undefined): string {
       return "Invalid Date"
     }
 
+    // If format is specified, use it
+    if (format) {
+      switch (format) {
+        case "MM/dd/yy":
+          return new Intl.DateTimeFormat("en-US", {
+            month: "2-digit",
+            day: "2-digit",
+            year: "2-digit",
+          }).format(dateObj)
+        case "MMM d":
+          return new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            day: "numeric",
+          }).format(dateObj)
+        default:
+          return new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          }).format(dateObj)
+      }
+    }
+
+    // Default format
     return new Intl.DateTimeFormat("en-US", {
       year: "numeric",
       month: "short",

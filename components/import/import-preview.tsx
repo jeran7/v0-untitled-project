@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, ArrowRight, Filter, Search, Download, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -189,6 +189,76 @@ export function ImportPreview({ transactions, trades, summary, onBack, onNext }:
     // Navigate to the review page with the import ID
     router.push(`/import/review?id=${importId}`)
   }
+
+  const validateImportedData = (data: any[]): boolean => {
+    if (!data || data.length === 0) {
+      //setError("No data found in the imported file"); // Assuming setError is defined elsewhere
+      console.error("No data found in the imported file")
+      return false
+    }
+
+    // Check for required fields based on broker type
+    //const requiredFields = brokerType === 'robinhood' // Assuming brokerType is defined elsewhere
+    //  ? ['symbol', 'price', 'quantity', 'side', 'date']
+    //  : ['symbol', 'price', 'quantity'];
+    const requiredFields = ["symbol", "price", "quantity"]
+
+    const firstRow = data[0]
+    const missingFields = requiredFields.filter((field) => !(field in firstRow))
+
+    if (missingFields.length > 0) {
+      //setError(`Missing required fields: ${missingFields.join(', ')}`); // Assuming setError is defined elsewhere
+      console.error(`Missing required fields: ${missingFields.join(", ")}`)
+      return false
+    }
+
+    console.log("Data validation passed")
+    return true
+  }
+
+  const processImportedData = useCallback(
+    async (data: any[]) => {
+      try {
+        console.log("Processing imported data:", data)
+
+        if (!validateImportedData(data)) {
+          return
+        }
+
+        // Your existing processing code
+        const processedTransactions = transactions // Replace with actual processing
+        const totalTrades = trades.length
+        const completedTrades = trades.filter((trade) => trade.status === "closed").length
+        const openPositions = trades.filter((trade) => trade.status === "open").length
+
+        // Store the processed data
+        const sessionId = `import-${Date.now()}`
+        localStorage.setItem(
+          `import-session-${sessionId}`,
+          JSON.stringify({
+            transactions: processedTransactions,
+            statistics: {
+              totalTrades,
+              completedTrades,
+              openPositions,
+              // Other stats...
+            },
+          }),
+        )
+
+        console.log("Data stored with session ID:", sessionId)
+        console.log("Stored data:", processedTransactions)
+
+        // Update state and redirect
+        //setSessionId(sessionId); // Assuming setSessionId is defined elsewhere
+        router.push(`/import/review?sessionId=${sessionId}`)
+      } catch (error) {
+        console.error("Error processing import data:", error)
+        //setError("Failed to process imported data"); // Assuming setError is defined elsewhere
+      }
+    },
+    [router, transactions, trades],
+  )
 
   return (
     <Card className="glass-panel rounded-xl overflow-hidden">

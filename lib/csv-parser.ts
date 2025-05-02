@@ -1,123 +1,149 @@
 import Papa from "papaparse"
 import type { RawTransaction, ProcessedTransaction, TransactionType } from "@/types/import"
 
-export async function parseCSV(file: File): Promise<RawTransaction[]> {
-  return new Promise((resolve, reject) => {
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: true,
-      encoding: "UTF-8",
-      // Add this option to prevent errors with varying column counts
-      error: (error) => {
-        reject(new Error(`CSV parsing error: ${error}`))
-      },
-      complete: (results) => {
-        try {
-          // Instead, log warnings but continue processing
-          if (results.errors && results.errors.length > 0) {
-            console.warn("CSV parsing warnings:", results.errors)
+// Add this near the top of the file
+const debugLog = (message: string, data?: any) => {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[CSV Parser] ${message}`, data)
+  }
+}
+
+// Then in your parsing functions, add logging
+export async function parseCSV(file: File, broker = "unknown"): Promise<RawTransaction[]> {
+  try {
+    debugLog(`Starting CSV parsing for broker: ${broker}`)
+    const text = await file.text()
+    debugLog(`CSV content length: ${text.length} characters`)
+
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        dynamicTyping: true,
+        encoding: "UTF-8",
+        // Add this option to prevent errors with varying column counts
+        error: (error) => {
+          reject(new Error(`CSV parsing error: ${error}`))
+        },
+        complete: (results) => {
+          try {
+            // Instead, log warnings but continue processing
+            if (results.errors && results.errors.length > 0) {
+              console.warn("CSV parsing warnings:", results.errors)
+            }
+
+            // Get the headers from the parsed file
+            const headers = results.meta.fields || []
+
+            // Check if this is a Robinhood CSV by looking for common headers
+            // We'll be flexible with header names since Robinhood changes them sometimes
+            const isRobinhoodFormat =
+              headers.some((h) => /activity\s*date|transaction\s*date|date/i.test(h)) &&
+              headers.some((h) => /description|details/i.test(h)) &&
+              headers.some((h) => /amount|value|debit|credit/i.test(h))
+
+            if (!isRobinhoodFormat) {
+              throw new Error(
+                "This doesn't appear to be a valid Robinhood transaction CSV. Please check the file format.",
+              )
+            }
+
+            // Map header variations to our standard names
+            const headerMap = createHeaderMap(headers)
+
+            const transactions: RawTransaction[] = results.data
+              .filter((row: any) => {
+                // Filter out empty rows or rows with no meaningful data
+                return Object.values(row).some((value) => value !== null && value !== undefined && value !== "")
+              })
+              .map((row: any, index: number) => {
+                try {
+                  // Use the header map to extract data with flexible column names
+                  const activityDate = new Date(row[headerMap.activityDate] || new Date())
+                  const processDate = new Date(row[headerMap.processDate] || row[headerMap.activityDate] || new Date())
+                  const settleDate = new Date(
+                    row[headerMap.settleDate] ||
+                      row[headerMap.processDate] ||
+                      row[headerMap.activityDate] ||
+                      new Date(),
+                  )
+
+                  // Extract other fields
+                  const instrument = row[headerMap.instrument] || ""
+                  const description = row[headerMap.description] || ""
+
+                  // Handle transaction code/type with flexible mapping
+                  const transCodeRaw = row[headerMap.transCode] || ""
+                  const transCode = mapTransactionType(transCodeRaw, description)
+
+                  // Handle quantity with flexible mapping - FIX: Add null check
+                  let quantity = 0
+                  if (headerMap.quantity && row[headerMap.quantity] !== undefined && row[headerMap.quantity] !== null) {
+                    const qtyStr = String(row[headerMap.quantity]).replace(/,/g, "")
+                    quantity = Number.parseFloat(qtyStr) || 0
+                  }
+
+                  // Handle price with flexible mapping - FIX: Add null check
+                  let price = 0
+                  if (headerMap.price && row[headerMap.price] !== undefined && row[headerMap.price] !== null) {
+                    const priceStr = String(row[headerMap.price]).replace(/[$,]/g, "")
+                    price = Number.parseFloat(priceStr) || 0
+                  }
+
+                  // Handle amount with flexible mapping - FIX: Add null check
+                  let amount = 0
+                  if (headerMap.amount && row[headerMap.amount] !== undefined && row[headerMap.amount] !== null) {
+                    const amountStr = String(row[headerMap.amount]).replace(/[$,()]/g, "")
+                    // Check if it's a negative amount (in parentheses)
+                    const isNegative = row[headerMap.amount].toString().includes("(")
+                    amount = Number.parseFloat(amountStr) || 0
+                    if (isNegative) amount = -amount
+                  }
+
+                  return {
+                    activityDate,
+                    processDate,
+                    settleDate,
+                    instrument,
+                    description,
+                    transCode,
+                    quantity,
+                    price,
+                    amount,
+                    rowIndex: index,
+                  }
+                } catch (err) {
+                  console.warn(`Error processing row ${index}:`, err, row)
+                  // Return a placeholder for problematic rows
+                  return {
+                    activityDate: new Date(),
+                    processDate: new Date(),
+                    settleDate: new Date(),
+                    instrument: "ERROR",
+                    description: `Error processing row ${index}`,
+                    transCode: "OTHER" as TransactionType,
+                    quantity: 0,
+                    price: 0,
+                    amount: 0,
+                    rowIndex: index,
+                  }
+                }
+              })
+
+            resolve(transactions)
+          } catch (error) {
+            reject(new Error(`Failed to parse CSV: ${error}`))
           }
-
-          // Get the headers from the parsed file
-          const headers = results.meta.fields || []
-
-          // Check if this is a Robinhood CSV by looking for common headers
-          // We'll be flexible with header names since Robinhood changes them sometimes
-          const isRobinhoodFormat =
-            headers.some((h) => /activity\s*date|transaction\s*date|date/i.test(h)) &&
-            headers.some((h) => /description|details/i.test(h)) &&
-            headers.some((h) => /amount|value|debit|credit/i.test(h))
-
-          if (!isRobinhoodFormat) {
-            throw new Error(
-              "This doesn't appear to be a valid Robinhood transaction CSV. Please check the file format.",
-            )
-          }
-
-          // Map header variations to our standard names
-          const headerMap = createHeaderMap(headers)
-
-          const transactions: RawTransaction[] = results.data
-            .filter((row: any) => {
-              // Filter out empty rows or rows with no meaningful data
-              return Object.values(row).some((value) => value !== null && value !== undefined && value !== "")
-            })
-            .map((row: any, index: number) => {
-              try {
-                // Use the header map to extract data with flexible column names
-                const activityDate = new Date(row[headerMap.activityDate] || new Date())
-                const processDate = new Date(row[headerMap.processDate] || row[headerMap.activityDate] || new Date())
-                const settleDate = new Date(
-                  row[headerMap.settleDate] || row[headerMap.processDate] || row[headerMap.activityDate] || new Date(),
-                )
-
-                // Extract other fields
-                const instrument = row[headerMap.instrument] || ""
-                const description = row[headerMap.description] || ""
-
-                // Handle transaction code/type with flexible mapping
-                const transCodeRaw = row[headerMap.transCode] || ""
-                const transCode = mapTransactionType(transCodeRaw, description)
-
-                // Handle quantity with flexible mapping
-                let quantity = 0
-                if (headerMap.quantity && row[headerMap.quantity] !== undefined) {
-                  quantity = Number.parseFloat(row[headerMap.quantity].toString().replace(/,/g, "")) || 0
-                }
-
-                // Handle price with flexible mapping
-                let price = 0
-                if (headerMap.price && row[headerMap.price] !== undefined) {
-                  price = Number.parseFloat(row[headerMap.price].toString().replace(/[$,]/g, "")) || 0
-                }
-
-                // Handle amount with flexible mapping
-                let amount = 0
-                if (headerMap.amount && row[headerMap.amount] !== undefined) {
-                  amount = Number.parseFloat(row[headerMap.amount].toString().replace(/[$,]/g, "")) || 0
-                }
-
-                return {
-                  activityDate,
-                  processDate,
-                  settleDate,
-                  instrument,
-                  description,
-                  transCode,
-                  quantity,
-                  price,
-                  amount,
-                  rowIndex: index,
-                }
-              } catch (err) {
-                console.warn(`Error processing row ${index}:`, err, row)
-                // Return a placeholder for problematic rows
-                return {
-                  activityDate: new Date(),
-                  processDate: new Date(),
-                  settleDate: new Date(),
-                  instrument: "ERROR",
-                  description: `Error processing row ${index}`,
-                  transCode: "OTHER" as TransactionType,
-                  quantity: 0,
-                  price: 0,
-                  amount: 0,
-                  rowIndex: index,
-                }
-              }
-            })
-
-          resolve(transactions)
-        } catch (error) {
-          reject(new Error(`Failed to parse CSV: ${error}`))
-        }
-      },
-      error: (error) => {
-        reject(new Error(`CSV parsing error: ${error}`))
-      },
+        },
+        error: (error) => {
+          reject(new Error(`CSV parsing error: ${error}`))
+        },
+      })
     })
-  })
+  } catch (error) {
+    debugLog(`Error parsing CSV:`, error)
+    throw new Error(`Failed to parse CSV file: ${error.message}`)
+  }
 }
 
 // Create a mapping from the actual CSV headers to our standard field names
@@ -166,13 +192,13 @@ function createHeaderMap(headers: string[]): Record<string, string> {
 // Find a matching header from a list of variations
 function findMatchingHeader(headers: string[], variations: string[]): string {
   for (const variation of variations) {
-    const match = headers.find((h) => h.toLowerCase() === variation.toLowerCase())
+    const match = headers.find((h) => h && h.toLowerCase() === variation.toLowerCase())
     if (match) return match
   }
 
   // Try partial matches if exact match not found
   for (const variation of variations) {
-    const match = headers.find((h) => h.toLowerCase().includes(variation.toLowerCase()))
+    const match = headers.find((h) => h && h.toLowerCase().includes(variation.toLowerCase()))
     if (match) return match
   }
 
@@ -188,7 +214,7 @@ export function processTransactions(rawTransactions: RawTransaction[]): Processe
     let isRecurring = false
 
     // If no symbol but we have a description, try to extract symbol from description
-    if (!symbol && transaction.description) {
+    if ((!symbol || symbol === "") && transaction.description) {
       // Try to extract symbol from description patterns like "AAPL Buy" or "Bought AAPL"
       const symbolMatch = transaction.description.match(/\b([A-Z]{1,5})\b/)
       if (symbolMatch) {
@@ -419,4 +445,30 @@ function mapTransactionType(transCode: string, description: string): Transaction
   }
 
   return "OTHER"
+}
+
+// In your mapping function for Robinhood (or other brokers)
+export function mapRobinhoodData(data: any[]): any[] {
+  debugLog(`Mapping ${data.length} Robinhood transactions`)
+
+  const transactions = data
+    .map((row, index) => {
+      try {
+        // Your existing mapping code
+        // ...
+
+        return {
+          id: `rb-${index}`,
+          // Other fields...
+        }
+      } catch (error) {
+        debugLog(`Error mapping row ${index}:`, error)
+        debugLog(`Problematic row:`, row)
+        return null
+      }
+    })
+    .filter(Boolean)
+
+  debugLog(`Successfully mapped ${transactions.length} transactions`)
+  return transactions
 }

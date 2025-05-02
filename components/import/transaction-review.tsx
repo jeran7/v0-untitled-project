@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { motion } from "framer-motion"
 import {
   ArrowLeft,
@@ -9,7 +9,6 @@ import {
   Edit,
   Trash2,
   Link,
-  AlertCircle,
   CheckCircle,
   ChevronDown,
   ChevronUp,
@@ -19,6 +18,14 @@ import {
   BarChart3,
   DollarSign,
   Percent,
+  TrendingUp,
+  TrendingDown,
+  Clock,
+  CalendarIcon,
+  ArrowUpRight,
+  ArrowDownRight,
+  Ban,
+  AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -51,6 +58,131 @@ interface ImportConfig {
   selectedTrades: string[]
 }
 
+// Format option symbol in a cleaner way
+function formatOptionSymbol(
+  symbol: string,
+  optionDetails?: { strikePrice: number; expirationDate: Date; optionType: "call" | "put" },
+) {
+  if (!optionDetails) return symbol
+
+  const formattedDate = formatDate(optionDetails.expirationDate, "MMM d")
+  const optionTypeIcon =
+    optionDetails.optionType === "call" ? (
+      <ArrowUpRight className="h-3 w-3 text-blue-500" />
+    ) : (
+      <ArrowDownRight className="h-3 w-3 text-red-500" />
+    )
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="font-medium">{symbol}</span>
+      <span className="text-muted-foreground mx-0.5">$</span>
+      <span>{optionDetails.strikePrice.toFixed(0)}</span>
+      <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted/30 text-xs">
+        {optionTypeIcon}
+        <span className="uppercase font-medium">{optionDetails.optionType}</span>
+      </div>
+      <span className="text-xs text-muted-foreground">{formattedDate}</span>
+    </div>
+  )
+}
+
+// Format duration with improved display
+function formatDuration(entryDate?: Date, exitDate?: Date, status?: string) {
+  if (!entryDate || !exitDate) {
+    return status === "expired" ? (
+      <span className="text-red-400 flex items-center gap-1">
+        <Ban className="h-3 w-3" /> Expired
+      </span>
+    ) : (
+      <span className="text-amber-400 flex items-center gap-1">
+        <Clock className="h-3 w-3" /> Open
+      </span>
+    )
+  }
+
+  // Calculate days between dates
+  const entryTime = new Date(entryDate).getTime()
+  const exitTime = new Date(exitDate).getTime()
+  const diffTime = Math.abs(exitTime - entryTime)
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) {
+    return (
+      <span className="text-purple-400 flex items-center gap-1">
+        <Clock className="h-3 w-3" /> Same day
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex items-center gap-1">
+      <CalendarIcon className="h-3 w-3" /> {diffDays} day{diffDays !== 1 ? "s" : ""}
+    </span>
+  )
+}
+
+// Calculate average exit price for multiple exits and show total costs
+function calculateAverageExitPrice(trade: CompleteTrade) {
+  if (!trade.exitPrice) return "N/A"
+
+  // If there are multiple STC transactions, calculate weighted average
+  const stcTransactions = trade.transactions.filter((t) => t.transCode === "STC")
+  if (stcTransactions.length <= 0) return "N/A"
+
+  let totalQuantity = 0
+  let weightedSum = 0
+  let totalProceeds = 0
+
+  stcTransactions.forEach((t) => {
+    totalQuantity += Math.abs(t.quantity)
+    weightedSum += Math.abs(t.quantity) * t.price
+    totalProceeds += Math.abs(t.amount)
+  })
+
+  const avgPrice = weightedSum / totalQuantity
+
+  // For options, we need to show the per-contract price
+  const isOption = trade.assetType === "option"
+  const displayPrice = isOption ? avgPrice : avgPrice
+
+  return (
+    <div>
+      <div className="font-medium">{formatCurrency(displayPrice)}</div>
+      <div className="text-xs text-muted-foreground mt-0.5">
+        {stcTransactions.length > 1 ? `${stcTransactions.length} exits` : ""}
+      </div>
+      <div className="text-xs text-muted-foreground">Total: {formatCurrency(totalProceeds)}</div>
+    </div>
+  )
+}
+
+// Get entry price and total cost
+function getEntryPriceDisplay(trade: CompleteTrade) {
+  const btoTransactions = trade.transactions.filter(
+    (t) => t.transCode === "BTO" || (t.transCode === "Buy" && t.assetType === "option"),
+  )
+
+  if (btoTransactions.length === 0) return formatCurrency(trade.entryPrice)
+
+  // Calculate total cost from BTO transactions
+  let totalCost = 0
+  btoTransactions.forEach((t) => {
+    totalCost += Math.abs(t.amount)
+  })
+
+  // For options, we need to show the per-contract price
+  const isOption = trade.assetType === "option"
+  const displayPrice = isOption ? trade.entryPrice : trade.entryPrice
+
+  return (
+    <div>
+      <div className="font-medium">{formatCurrency(displayPrice)}</div>
+      <div className="text-xs text-muted-foreground">Total: {formatCurrency(totalCost)}</div>
+    </div>
+  )
+}
+
 export function TransactionReview({ transactions, trades, summary, onBack, onImport }: TransactionReviewProps) {
   const [activeTab, setActiveTab] = useState("options")
   const [searchTerm, setSearchTerm] = useState("")
@@ -71,9 +203,27 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
   })
   const [createNewInstruments, setCreateNewInstruments] = useState(true)
   const [expandedTrades, setExpandedTrades] = useState<string[]>([])
+  const [debugMode, setDebugMode] = useState(false)
+
+  // Debug logging
+  useEffect(() => {
+    console.log("TransactionReview component mounted")
+    console.log("Trades data:", trades)
+    console.log("Transactions data:", transactions)
+    console.log("Summary data:", summary)
+
+    // Check if data is available
+    if (!trades || trades.length === 0) {
+      console.warn("No trades data available")
+    }
+    if (!transactions || transactions.length === 0) {
+      console.warn("No transactions data available")
+    }
+  }, [trades, transactions, summary])
 
   // Filter transactions by type based on active tab
   const filteredTransactions = useMemo(() => {
+    console.log("Filtering transactions for tab:", activeTab)
     let filtered = [...transactions]
 
     // Apply date range filter if set
@@ -87,8 +237,8 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     if (searchTerm) {
       filtered = filtered.filter(
         (transaction) =>
-          transaction.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          transaction.description.toLowerCase().includes(searchTerm.toLowerCase()),
+          transaction.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          transaction.description?.toLowerCase().includes(searchTerm.toLowerCase()),
       )
     }
 
@@ -105,22 +255,22 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       case "dividends":
         return filtered.filter(
           (transaction) =>
-            transaction.transCode === "CDIV" || transaction.description.toLowerCase().includes("dividend"),
+            transaction.transCode === "CDIV" || transaction.description?.toLowerCase().includes("dividend"),
         )
       case "transfers":
         return filtered.filter(
           (transaction) =>
             transaction.transCode === "ACH" ||
-            transaction.description.toLowerCase().includes("transfer") ||
-            transaction.description.toLowerCase().includes("deposit") ||
-            transaction.description.toLowerCase().includes("withdrawal"),
+            transaction.description?.toLowerCase().includes("transfer") ||
+            transaction.description?.toLowerCase().includes("deposit") ||
+            transaction.description?.toLowerCase().includes("withdrawal"),
         )
       case "fees":
         return filtered.filter(
           (transaction) =>
             transaction.transCode === "AFEE" ||
-            transaction.description.toLowerCase().includes("fee") ||
-            transaction.description.toLowerCase().includes("commission"),
+            transaction.description?.toLowerCase().includes("fee") ||
+            transaction.description?.toLowerCase().includes("commission"),
         )
       default:
         return filtered
@@ -129,6 +279,9 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
 
   // Filter trades based on active tab, search term, and date range
   const filteredTrades = useMemo(() => {
+    console.log("Filtering trades for tab:", activeTab)
+    console.log("Current trades data:", trades)
+
     let filtered = [...trades]
 
     // Apply date range filter if set
@@ -266,7 +419,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
   }
 
   // Check for potential issues in the data
-  useMemo(() => {
+  useEffect(() => {
     const newWarnings: string[] = []
 
     // Check for options without matching transactions
@@ -302,6 +455,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           }
           onCheckedChange={(value) => selectAllTrades(!!value)}
           aria-label="Select all"
+          className="glass-input"
         />
       ),
       cell: ({ row }: any) => (
@@ -309,6 +463,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           checked={selectedTrades.includes(row.original.id)}
           onCheckedChange={() => toggleTradeSelection(row.original.id)}
           aria-label="Select row"
+          className="glass-input"
         />
       ),
       enableSorting: false,
@@ -319,71 +474,71 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       cell: ({ row }: any) => {
         const trade = row.original
         return (
-          <div className="flex items-center space-x-2">
-            <Button variant="ghost" size="sm" className="p-0 h-6 w-6" onClick={() => toggleTradeExpansion(trade.id)}>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="p-0 h-6 w-6 hover:bg-muted/30 transition-colors"
+              onClick={() => toggleTradeExpansion(trade.id)}
+            >
               {expandedTrades.includes(trade.id) ? (
                 <ChevronUp className="h-4 w-4" />
               ) : (
                 <ChevronDown className="h-4 w-4" />
               )}
             </Button>
-            <span className="font-medium">{trade.symbol}</span>
-            {trade.assetType === "option" && trade.optionDetails && (
-              <Badge variant="outline" className="text-xs">
-                {trade.optionDetails.optionType.toUpperCase()} ${trade.optionDetails.strikePrice.toFixed(2)} exp{" "}
-                {formatDate(trade.optionDetails.expirationDate, "MM/dd/yy")}
-              </Badge>
-            )}
+            {formatOptionSymbol(trade.symbol, trade.optionDetails)}
           </div>
         )
       },
     },
     {
-      accessorKey: "entryDate",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("entryDate")}>
-          <span>Entry Date</span>
-          {sortConfig?.key === "entryDate" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
-        </div>
-      ),
-      cell: ({ row }: any) => formatDate(row.original.entryDate),
+      id: "entryInfo",
+      header: "Entry",
+      cell: ({ row }: any) => {
+        const trade = row.original
+        return (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <CalendarIcon className="h-3 w-3 text-muted-foreground" />
+              <span>{formatDate(trade.entryDate)}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <DollarSign className="h-3 w-3 text-muted-foreground" />
+              {getEntryPriceDisplay(trade)}
+            </div>
+          </div>
+        )
+      },
     },
     {
-      accessorKey: "exitDate",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("exitDate")}>
-          <span>Exit Date</span>
-          {sortConfig?.key === "exitDate" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
-        </div>
-      ),
-      cell: ({ row }: any) => (row.original.exitDate ? formatDate(row.original.exitDate) : "Open"),
+      id: "exitInfo",
+      header: "Exit",
+      cell: ({ row }: any) => {
+        const trade = row.original
+        return (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <CalendarIcon className="h-3 w-3 text-muted-foreground" />
+              <span>{trade.exitDate ? formatDate(trade.exitDate) : "Open"}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <DollarSign className="h-3 w-3 text-muted-foreground" />
+              {calculateAverageExitPrice(trade)}
+            </div>
+          </div>
+        )
+      },
     },
     {
       accessorKey: "duration",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("duration")}>
-          <span>Duration</span>
-          {sortConfig?.key === "duration" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
-        </div>
-      ),
-      cell: ({ row }: any) => (row.original.duration ? `${row.original.duration} days` : "N/A"),
+      header: "Duration",
+      cell: ({ row }: any) => formatDuration(row.original.entryDate, row.original.exitDate, row.original.status),
     },
     {
       accessorKey: "quantity",
       header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("quantity")}>
+        <div className="flex items-center justify-end cursor-pointer" onClick={() => requestSort("quantity")}>
           <span>Quantity</span>
           {sortConfig?.key === "quantity" && (
             <span className="ml-1">
@@ -392,40 +547,16 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           )}
         </div>
       ),
-      cell: ({ row }: any) => Math.abs(row.original.quantity).toFixed(row.original.quantity % 1 === 0 ? 0 : 4),
-    },
-    {
-      accessorKey: "entryPrice",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("entryPrice")}>
-          <span>Entry Price</span>
-          {sortConfig?.key === "entryPrice" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
+      cell: ({ row }: any) => (
+        <div className="text-right">
+          {Math.abs(row.original.quantity).toFixed(row.original.quantity % 1 === 0 ? 0 : 4)}
         </div>
       ),
-      cell: ({ row }: any) => formatCurrency(row.original.entryPrice),
-    },
-    {
-      accessorKey: "exitPrice",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("exitPrice")}>
-          <span>Exit Price</span>
-          {sortConfig?.key === "exitPrice" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
-        </div>
-      ),
-      cell: ({ row }: any) => (row.original.exitPrice ? formatCurrency(row.original.exitPrice) : "N/A"),
     },
     {
       accessorKey: "profitLoss",
       header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("profitLoss")}>
+        <div className="flex items-center justify-end cursor-pointer" onClick={() => requestSort("profitLoss")}>
           <span>P&L</span>
           {sortConfig?.key === "profitLoss" && (
             <span className="ml-1">
@@ -436,27 +567,13 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       ),
       cell: ({ row }: any) => {
         const pl = row.original.profitLoss
-        return <span className={pl > 0 ? "text-blue-500" : pl < 0 ? "text-red-500" : ""}>{formatCurrency(pl)}</span>
-      },
-    },
-    {
-      accessorKey: "profitLossPercent",
-      header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("profitLossPercent")}>
-          <span>P&L %</span>
-          {sortConfig?.key === "profitLossPercent" && (
-            <span className="ml-1">
-              {sortConfig.direction === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-          )}
-        </div>
-      ),
-      cell: ({ row }: any) => {
-        const plPercent = row.original.profitLossPercent
         return (
-          <span className={plPercent > 0 ? "text-blue-500" : plPercent < 0 ? "text-red-500" : ""}>
-            {formatPercent(plPercent)}
-          </span>
+          <div className="text-right font-medium">
+            <div className={pl > 0 ? "text-blue-500" : pl < 0 ? "text-red-500" : ""}>{formatCurrency(pl)}</div>
+            <div className={`text-xs ${pl > 0 ? "text-blue-400" : pl < 0 ? "text-red-400" : "text-muted-foreground"}`}>
+              {formatPercent(row.original.profitLossPercent)}
+            </div>
+          </div>
         )
       },
     },
@@ -465,9 +582,27 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       header: "Status",
       cell: ({ row }: any) => {
         const status = row.original.status
+        const statusConfig = {
+          open: { variant: "outline", icon: <Clock className="h-3.5 w-3.5 mr-1" />, label: "Open" },
+          closed: {
+            variant: row.original.profitLoss > 0 ? "success" : "destructive",
+            icon:
+              row.original.profitLoss > 0 ? (
+                <TrendingUp className="h-3.5 w-3.5 mr-1" />
+              ) : (
+                <TrendingDown className="h-3.5 w-3.5 mr-1" />
+              ),
+            label: "Closed",
+          },
+          expired: { variant: "destructive", icon: <Ban className="h-3.5 w-3.5 mr-1" />, label: "Expired" },
+        }
+
+        const config = statusConfig[status as keyof typeof statusConfig]
+
         return (
-          <Badge variant={status === "open" ? "outline" : status === "closed" ? "success" : "destructive"}>
-            {status.charAt(0).toUpperCase() + status.slice(1)}
+          <Badge variant={config.variant as any} className="flex items-center justify-center px-2 py-1">
+            {config.icon}
+            {config.label}
           </Badge>
         )
       },
@@ -476,11 +611,11 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
       id: "actions",
       header: "Actions",
       cell: ({ row }: any) => (
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
                   <Edit className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -490,7 +625,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -516,6 +651,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           }
           onCheckedChange={(value) => selectAllTransactions(!!value)}
           aria-label="Select all"
+          className="glass-input"
         />
       ),
       cell: ({ row }: any) => (
@@ -523,6 +659,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           checked={selectedTransactions.includes(row.original.rowIndex.toString())}
           onCheckedChange={() => toggleTransactionSelection(row.original.rowIndex.toString())}
           aria-label="Select row"
+          className="glass-input"
         />
       ),
       enableSorting: false,
@@ -565,7 +702,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     {
       accessorKey: "amount",
       header: () => (
-        <div className="flex items-center cursor-pointer" onClick={() => requestSort("amount")}>
+        <div className="flex items-center justify-end cursor-pointer" onClick={() => requestSort("amount")}>
           <span>Amount</span>
           {sortConfig?.key === "amount" && (
             <span className="ml-1">
@@ -575,20 +712,22 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
         </div>
       ),
       cell: ({ row }: any) => (
-        <span className={row.original.amount >= 0 ? "text-blue-500" : "text-red-500"}>
-          {formatCurrency(row.original.amount)}
-        </span>
+        <div className="text-right">
+          <span className={row.original.amount >= 0 ? "text-blue-500" : "text-red-500"}>
+            {formatCurrency(row.original.amount)}
+          </span>
+        </div>
       ),
     },
     {
       id: "actions",
       header: "Actions",
       cell: ({ row }: any) => (
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
                   <Edit className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -598,7 +737,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -608,7 +747,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
                   <Link className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -626,23 +765,32 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
     if (!trade) return null
 
     return (
-      <div className="bg-muted/30 p-4 rounded-md mt-2 mb-4 border border-border/50">
-        <h4 className="text-sm font-medium mb-2">Related Transactions</h4>
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        transition={{ duration: 0.2 }}
+        className="bg-muted/30 backdrop-blur-sm p-4 rounded-md mt-2 mb-4 border border-border/50"
+      >
+        <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+          <Link className="h-4 w-4 text-blue-400" />
+          Related Transactions
+        </h4>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b">
-                <th className="text-left py-2 px-2">Date</th>
-                <th className="text-left py-2 px-2">Type</th>
-                <th className="text-left py-2 px-2">Description</th>
-                <th className="text-left py-2 px-2">Quantity</th>
-                <th className="text-left py-2 px-2">Price</th>
-                <th className="text-left py-2 px-2">Amount</th>
+              <tr className="border-b border-border/50">
+                <th className="text-left py-2 px-2 text-muted-foreground">Date</th>
+                <th className="text-left py-2 px-2 text-muted-foreground">Type</th>
+                <th className="text-left py-2 px-2 text-muted-foreground">Description</th>
+                <th className="text-right py-2 px-2 text-muted-foreground">Quantity</th>
+                <th className="text-right py-2 px-2 text-muted-foreground">Price</th>
+                <th className="text-right py-2 px-2 text-muted-foreground">Amount</th>
               </tr>
             </thead>
             <tbody>
               {trade.transactions.map((transaction, index) => (
-                <tr key={index} className="border-b border-border/30 hover:bg-muted/50">
+                <tr key={index} className="border-b border-border/30 hover:bg-muted/50 transition-colors">
                   <td className="py-2 px-2">{formatDate(transaction.activityDate)}</td>
                   <td className="py-2 px-2">
                     <Badge variant={getTransactionBadgeVariant(transaction.transCode)} className="text-xs">
@@ -652,11 +800,11 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                   <td className="py-2 px-2 max-w-xs truncate" title={transaction.description}>
                     {transaction.description}
                   </td>
-                  <td className="py-2 px-2">
+                  <td className="py-2 px-2 text-right">
                     {Math.abs(transaction.quantity).toFixed(transaction.quantity % 1 === 0 ? 0 : 4)}
                   </td>
-                  <td className="py-2 px-2">{formatCurrency(transaction.price)}</td>
-                  <td className="py-2 px-2">
+                  <td className="py-2 px-2 text-right">{formatCurrency(transaction.price)}</td>
+                  <td className="py-2 px-2 text-right">
                     <span className={transaction.amount >= 0 ? "text-blue-500" : "text-red-500"}>
                       {formatCurrency(transaction.amount)}
                     </span>
@@ -666,9 +814,64 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
             </tbody>
           </table>
         </div>
-      </div>
+      </motion.div>
     )
   }
+
+  // Add this function to debug option price calculations
+  function debugOptionPrices(trade: CompleteTrade) {
+    if (trade.assetType !== "option") return
+
+    console.log("Option Trade:", trade.symbol, trade.optionDetails)
+
+    const btoTransactions = trade.transactions.filter(
+      (t) => t.transCode === "BTO" || (t.transCode === "Buy" && t.description?.toLowerCase().includes("option")),
+    )
+
+    const stcTransactions = trade.transactions.filter(
+      (t) => t.transCode === "STC" || (t.transCode === "Sell" && t.description?.toLowerCase().includes("option")),
+    )
+
+    console.log("BTO Transactions:", btoTransactions)
+    console.log("STC Transactions:", stcTransactions)
+
+    // Calculate entry price
+    if (btoTransactions.length > 0) {
+      const totalQuantity = btoTransactions.reduce((sum, t) => sum + Math.abs(t.quantity), 0)
+      const totalCost = btoTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+      const perContractPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0
+
+      console.log("Entry Calculation:")
+      console.log("- Total Quantity:", totalQuantity)
+      console.log("- Total Cost:", totalCost)
+      console.log("- Per Contract Price:", perContractPrice)
+    }
+
+    // Calculate exit price
+    if (stcTransactions.length > 0) {
+      const totalQuantity = stcTransactions.reduce((sum, t) => sum + Math.abs(t.quantity), 0)
+      const totalProceeds = stcTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+      const perContractPrice = totalQuantity > 0 ? totalProceeds / totalQuantity : 0
+
+      console.log("Exit Calculation:")
+      console.log("- Total Quantity:", totalQuantity)
+      console.log("- Total Proceeds:", totalProceeds)
+      console.log("- Per Contract Price:", perContractPrice)
+    }
+  }
+
+  // Add this useEffect hook after the other useEffect hooks
+  useEffect(() => {
+    // Debug option prices for the problematic SPY trade
+    const spyTrades = trades.filter(
+      (t) => t.symbol === "SPY" && t.assetType === "option" && t.optionDetails?.strikePrice === 548,
+    )
+
+    if (spyTrades.length > 0) {
+      console.log("Found SPY $548 trades:", spyTrades.length)
+      spyTrades.forEach(debugOptionPrices)
+    }
+  }, [trades])
 
   return (
     <Card className="glass-panel rounded-xl overflow-hidden">
@@ -679,8 +882,8 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
 
       <CardContent className="p-6">
         {warnings.length > 0 && (
-          <Alert variant="warning" className="mb-6">
-            <AlertCircle className="h-4 w-4" />
+          <Alert variant="warning" className="mb-6 glass-panel border-amber-500/30">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
             <AlertTitle>Attention Required</AlertTitle>
             <AlertDescription>
               <ul className="list-disc pl-5 mt-2">
@@ -752,7 +955,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           </TabsList>
 
           <TabsContent value="options" className="space-y-4">
-            <div className="rounded-md overflow-hidden border">
+            <div className="rounded-md overflow-hidden border border-border/40 backdrop-blur-md">
               <DataTable
                 columns={tradeColumns}
                 data={filteredTrades.filter((trade) => trade.assetType === "option")}
@@ -763,7 +966,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           </TabsContent>
 
           <TabsContent value="stocks" className="space-y-4">
-            <div className="rounded-md overflow-hidden border">
+            <div className="rounded-md overflow-hidden border border-border/40 backdrop-blur-md">
               <DataTable
                 columns={tradeColumns}
                 data={filteredTrades.filter((trade) => trade.assetType === "stock")}
@@ -774,12 +977,12 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           </TabsContent>
 
           <TabsContent value="dividends" className="space-y-4">
-            <div className="rounded-md overflow-hidden border">
+            <div className="rounded-md overflow-hidden border border-border/40 backdrop-blur-md">
               <DataTable
                 columns={transactionColumns}
                 data={filteredTransactions.filter(
                   (transaction) =>
-                    transaction.transCode === "CDIV" || transaction.description.toLowerCase().includes("dividend"),
+                    transaction.transCode === "CDIV" || transaction.description?.toLowerCase().includes("dividend"),
                 )}
                 pagination={true}
               />
@@ -787,15 +990,15 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           </TabsContent>
 
           <TabsContent value="transfers" className="space-y-4">
-            <div className="rounded-md overflow-hidden border">
+            <div className="rounded-md overflow-hidden border border-border/40 backdrop-blur-md">
               <DataTable
                 columns={transactionColumns}
                 data={filteredTransactions.filter(
                   (transaction) =>
                     transaction.transCode === "ACH" ||
-                    transaction.description.toLowerCase().includes("transfer") ||
-                    transaction.description.toLowerCase().includes("deposit") ||
-                    transaction.description.toLowerCase().includes("withdrawal"),
+                    transaction.description?.toLowerCase().includes("transfer") ||
+                    transaction.description?.toLowerCase().includes("deposit") ||
+                    transaction.description?.toLowerCase().includes("withdrawal"),
                 )}
                 pagination={true}
               />
@@ -803,14 +1006,14 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
           </TabsContent>
 
           <TabsContent value="fees" className="space-y-4">
-            <div className="rounded-md overflow-hidden border">
+            <div className="rounded-md overflow-hidden border border-border/40 backdrop-blur-md">
               <DataTable
                 columns={transactionColumns}
                 data={filteredTransactions.filter(
                   (transaction) =>
                     transaction.transCode === "AFEE" ||
-                    transaction.description.toLowerCase().includes("fee") ||
-                    transaction.description.toLowerCase().includes("commission"),
+                    transaction.description?.toLowerCase().includes("fee") ||
+                    transaction.description?.toLowerCase().includes("commission"),
                 )}
                 pagination={true}
               />
@@ -820,7 +1023,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
 
         <div className="mt-8 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="bg-card/50 backdrop-blur-md">
+            <Card className="glass-panel backdrop-blur-md">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Calendar className="h-5 w-5 text-blue-500" />
@@ -837,6 +1040,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                           id="options"
                           checked={includeTypes.options}
                           onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, options: !!checked })}
+                          className="glass-input"
                         />
                         <label htmlFor="options" className="text-sm">
                           Options Trades
@@ -847,6 +1051,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                           id="stocks"
                           checked={includeTypes.stocks}
                           onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, stocks: !!checked })}
+                          className="glass-input"
                         />
                         <label htmlFor="stocks" className="text-sm">
                           Stock Trades
@@ -857,16 +1062,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                           id="dividends"
                           checked={includeTypes.dividends}
                           onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, dividends: !!checked })}
-                        />
-                        <label htmlFor="dividends" className="text-sm">
-                          Dividends & Income
-                        </label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="dividends"
-                          checked={includeTypes.dividends}
-                          onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, dividends: !!checked })}
+                          className="glass-input"
                         />
                         <label htmlFor="dividends" className="text-sm">
                           Dividends & Income
@@ -877,6 +1073,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                           id="transfers"
                           checked={includeTypes.transfers}
                           onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, transfers: !!checked })}
+                          className="glass-input"
                         />
                         <label htmlFor="transfers" className="text-sm">
                           Transfers
@@ -887,6 +1084,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                           id="fees"
                           checked={includeTypes.fees}
                           onCheckedChange={(checked) => setIncludeTypes({ ...includeTypes, fees: !!checked })}
+                          className="glass-input"
                         />
                         <label htmlFor="fees" className="text-sm">
                           Fees
@@ -901,6 +1099,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                         id="createNew"
                         checked={createNewInstruments}
                         onCheckedChange={(checked) => setCreateNewInstruments(!!checked)}
+                        className="glass-input"
                       />
                       <label htmlFor="createNew" className="text-sm">
                         Create new instruments if not found
@@ -911,7 +1110,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
               </CardContent>
             </Card>
 
-            <Card className="bg-card/50 backdrop-blur-md">
+            <Card className="glass-panel backdrop-blur-md">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <BarChart3 className="h-5 w-5 text-blue-500" />
@@ -948,7 +1147,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
               </CardContent>
             </Card>
 
-            <Card className="bg-card/50 backdrop-blur-md">
+            <Card className="glass-panel backdrop-blur-md">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <CheckCircle className="h-5 w-5 text-blue-500" />
@@ -975,7 +1174,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full"
+                      className="w-full glass-button"
                       onClick={() => {
                         setSelectedTrades([])
                         setSelectedTransactions([])
@@ -992,8 +1191,8 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
         </div>
       </CardContent>
 
-      <CardFooter className="flex justify-between bg-muted/30 px-6 py-4">
-        <Button variant="outline" onClick={onBack}>
+      <CardFooter className="flex justify-between bg-muted/30 backdrop-blur-md px-6 py-4">
+        <Button variant="outline" onClick={onBack} className="glass-button">
           <ArrowLeft size={16} className="mr-2" /> Back
         </Button>
 
@@ -1009,7 +1208,7 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
             <Button
               onClick={handleImport}
               disabled={isImporting || (selectedTrades.length === 0 && selectedTransactions.length === 0)}
-              className={`relative ${importSuccess ? "bg-green-600 hover:bg-green-700" : ""}`}
+              className={`relative glass-button ${importSuccess ? "bg-green-600/70 hover:bg-green-700/70 border-green-500/50" : ""}`}
             >
               {importSuccess ? (
                 <>
