@@ -31,6 +31,7 @@ export function LoginForm() {
     }
   }, [])
 
+  // Update the handleSubmit function to improve error handling and user feedback
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
@@ -46,6 +47,11 @@ export function LoginForm() {
     try {
       console.log("Attempting to sign in with:", email)
 
+      // Add development mode hint
+      if (process.env.NODE_ENV === "development") {
+        console.log("Development mode: You can use demo@example.com / demo123 for testing")
+      }
+
       const result = await AuthService.signIn(email, password)
 
       if (result.success) {
@@ -57,6 +63,7 @@ export function LoginForm() {
         // Navigate to dashboard
         window.location.href = "/dashboard"
       } else {
+        console.warn("Login failed:", result.error)
         setError(result.error || "Login failed")
         setShowBackupAuth(true)
       }
@@ -132,6 +139,13 @@ export function LoginForm() {
       <CardHeader>
         <CardTitle className="text-2xl font-bold">Sign In</CardTitle>
         <CardDescription>Enter your credentials to access your account</CardDescription>
+        {process.env.NODE_ENV === "development" && (
+          <div className="mb-4 p-2 bg-blue-500/20 border border-blue-500/50 rounded text-sm">
+            <p>
+              <strong>Development Mode:</strong> Use <code>demo@example.com</code> / <code>demo123</code> to login
+            </p>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">

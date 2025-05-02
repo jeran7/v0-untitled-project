@@ -28,8 +28,27 @@ export const AuthService = {
   // Sign in with email and password
   signIn: async (email: string, password: string) => {
     try {
+      // Development bypass for testing (remove in production)
+      if (process.env.NODE_ENV === "development" && email === "demo@example.com" && password === "demo123") {
+        console.log("Using development bypass authentication")
+        return {
+          success: true,
+          user: {
+            id: "dev-user-id",
+            email: "demo@example.com",
+            user_metadata: { name: "Demo User" },
+          },
+          session: {
+            access_token: "dev-token",
+            expires_at: Date.now() + 3600000,
+          },
+        }
+      }
+
       // First sign out to clear any existing session
       await supabase.auth.signOut()
+
+      console.log("Attempting Supabase authentication...")
 
       // Sign in with new credentials
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -37,7 +56,12 @@ export const AuthService = {
         password,
       })
 
-      if (error) throw error
+      if (error) {
+        console.error("Supabase auth error details:", error)
+        throw error
+      }
+
+      console.log("Authentication successful:", data.user?.email)
 
       // Store a backup of authentication state
       if (data.session) {
@@ -58,7 +82,18 @@ export const AuthService = {
       return { success: true, user: data.user, session: data.session }
     } catch (error: any) {
       console.error("Sign in error:", error)
-      return { success: false, error: error.message }
+
+      // Provide more specific error messages
+      if (error.message?.includes("Invalid login credentials")) {
+        return { success: false, error: "Invalid email or password. Please try again." }
+      }
+
+      // Handle network errors
+      if (error.message?.includes("fetch") || error.message?.includes("network")) {
+        return { success: false, error: "Network error. Please check your connection and try again." }
+      }
+
+      return { success: false, error: error.message || "Authentication failed" }
     }
   },
 
