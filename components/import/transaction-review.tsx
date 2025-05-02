@@ -347,7 +347,14 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
 
   // Toggle trade expansion to show related transactions
   const toggleTradeExpansion = (id: string) => {
-    setExpandedTrades((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+    // If this trade is already expanded, collapse it
+    if (expandedTrades.includes(id)) {
+      setExpandedTrades((prev) => prev.filter((item) => item !== id))
+    }
+    // Otherwise, collapse any other expanded trades and expand this one
+    else {
+      setExpandedTrades([id])
+    }
   }
 
   // Select all visible transactions
@@ -630,6 +637,16 @@ export function TransactionReview({ transactions, trades, summary, onBack, onImp
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Remove trade</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted/30 transition-colors">
+                  <Link className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Link to trade</TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>
