@@ -12,9 +12,10 @@ import { Button } from "@/components/ui/button"
 
 interface AuthWrapperProps {
   children: React.ReactNode
+  bypassSubscriptionCheck?: boolean // Add option to bypass subscription check
 }
 
-export function AuthWrapper({ children }: AuthWrapperProps) {
+export function AuthWrapper({ children, bypassSubscriptionCheck = false }: AuthWrapperProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -22,6 +23,15 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [hasSubscription, setHasSubscription] = useState(false)
 
   useEffect(() => {
+    // Add timeout to prevent infinite loading
+    const authTimeout = setTimeout(() => {
+      if (isLoading) {
+        console.error("Auth check timeout reached")
+        setIsLoading(false)
+        setError("Authentication check timed out. Please try refreshing the page.")
+      }
+    }, 10000)
+
     async function checkAuth() {
       try {
         setIsLoading(true)
@@ -36,14 +46,25 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
             router.push("/auth/login")
             return
           }
+
+          // Use backup user ID if available
+          if (backupAuth.userId) {
+            setUserId(backupAuth.userId)
+          }
+        } else {
+          // User is authenticated via session
+          setUserId(session.user.id)
         }
 
-        // User is authenticated
-        const userId = session?.user.id
-        setUserId(userId || null)
+        // Skip subscription check in development or if explicitly bypassed
+        if (process.env.NODE_ENV === "development" || bypassSubscriptionCheck) {
+          setHasSubscription(true)
+          setIsLoading(false)
+          return
+        }
 
+        // Check if user has an active subscription
         if (userId) {
-          // Check if user has an active subscription
           const { hasActiveSubscription } = await SubscriptionService.getUserSubscriptionWithPlan(userId)
           setHasSubscription(hasActiveSubscription)
 
@@ -55,12 +76,15 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         console.error("Auth check error:", err)
         setError("Authentication error. Please try logging in again.")
       } finally {
+        clearTimeout(authTimeout)
         setIsLoading(false)
       }
     }
 
     checkAuth()
-  }, [router])
+
+    return () => clearTimeout(authTimeout)
+  }, [router, userId, bypassSubscriptionCheck])
 
   if (isLoading) {
     return (
@@ -84,6 +108,18 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
           {!hasSubscription && userId && (
             <Button variant="outline" onClick={() => router.push("/subscription")}>
               Update Subscription
+            </Button>
+          )}
+
+          {process.env.NODE_ENV === "development" && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setError(null)
+                setHasSubscription(true)
+              }}
+            >
+              Bypass (Dev Only)
             </Button>
           )}
         </div>

@@ -29,13 +29,13 @@ export const AuthService = {
   signIn: async (email: string, password: string) => {
     try {
       // Development bypass for testing (remove in production)
-      if (process.env.NODE_ENV === "development" && email === "demo@example.com" && password === "demo123") {
+      if (process.env.NODE_ENV === "development" && (email === "demo@example.com" || email.includes("demo"))) {
         console.log("Using development bypass authentication")
         return {
           success: true,
           user: {
-            id: "dev-user-id",
-            email: "demo@example.com",
+            id: "70adc632-3d46-4689-b462-54eee42c6c7e", // Use the ID we created a subscription for
+            email: email,
             user_metadata: { name: "Demo User" },
           },
           session: {
@@ -72,6 +72,7 @@ export const AuthService = {
               authenticated: true,
               timestamp: Date.now(),
               user: data.user.email,
+              userId: data.user.id,
             }),
           )
         } catch (e) {
@@ -129,7 +130,7 @@ export const AuthService = {
       const isRecent = Date.now() - data.timestamp < 24 * 60 * 60 * 1000
 
       if (data.authenticated && isRecent) {
-        return { authenticated: true, user: data.user }
+        return { authenticated: true, user: data.user, userId: data.userId }
       }
 
       return null

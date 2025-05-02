@@ -38,7 +38,17 @@ export function LoginForm() {
     setSuccess(null)
     setIsLoading(true)
 
+    // Add timeout to prevent infinite spinner
+    const loginTimeout = setTimeout(() => {
+      if (isLoading) {
+        setIsLoading(false)
+        setError("Login request timed out. Please try again.")
+        console.error("Login timeout reached")
+      }
+    }, 10000)
+
     if (!email || !password) {
+      clearTimeout(loginTimeout)
       setError("Please enter both email and password")
       setIsLoading(false)
       return
@@ -54,6 +64,8 @@ export function LoginForm() {
 
       const result = await AuthService.signIn(email, password)
 
+      clearTimeout(loginTimeout) // Clear the timeout on success
+
       if (result.success) {
         setSuccess("Login successful! Redirecting...")
 
@@ -68,10 +80,12 @@ export function LoginForm() {
         setShowBackupAuth(true)
       }
     } catch (err: any) {
+      clearTimeout(loginTimeout) // Clear the timeout on error
       console.error("Login exception:", err)
       setError("An unexpected error occurred. Please try again.")
       setShowBackupAuth(true)
     } finally {
+      clearTimeout(loginTimeout) // Ensure timeout is cleared
       setIsLoading(false)
     }
   }
