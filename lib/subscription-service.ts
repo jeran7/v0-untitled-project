@@ -1,15 +1,22 @@
 import { supabase } from "./supabase/client"
 import type { SubscriptionPlan, UserSubscription } from "@/types/database"
 
+// Fix table name constants to prevent typos
+const TABLES = {
+  USER_SUBSCRIPTIONS: "user_subscriptions", // Ensure full table name is used
+  SUBSCRIPTION_PLANS: "subscription_plans",
+  TRADES: "trades",
+}
+
 export const SubscriptionService = {
   /**
    * Get the active subscription for a user
    */
   getUserSubscription: async (userId: string): Promise<UserSubscription | null> => {
     try {
-      // Fix the typo in the table name - ensure it's "user_subscriptions" not "user_subscriptio"
+      // Use the constant to prevent typos
       const { data, error } = await supabase
-        .from("user_subscriptions") // Correct table name
+        .from(TABLES.USER_SUBSCRIPTIONS) // Use constant instead of string literal
         .select("*")
         .eq("user_id", userId)
         .eq("status", "active")
@@ -47,7 +54,7 @@ export const SubscriptionService = {
    */
   getSubscriptionPlan: async (planId: string): Promise<SubscriptionPlan | null> => {
     try {
-      const { data, error } = await supabase.from("subscription_plans").select("*").eq("id", planId).single()
+      const { data, error } = await supabase.from(TABLES.SUBSCRIPTION_PLANS).select("*").eq("id", planId).single()
 
       if (error) {
         console.error("Error fetching subscription plan:", error)
@@ -170,7 +177,7 @@ export const SubscriptionService = {
 
       // Count user's trades
       const { count, error } = await supabase
-        .from("trades")
+        .from(TABLES.TRADES)
         .select("*", { count: "exact", head: true })
         .eq("user_id", userId)
 
