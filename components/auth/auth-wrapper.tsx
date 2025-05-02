@@ -1,0 +1,95 @@
+"use client"
+
+import type React from "react"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { AuthService } from "@/lib/auth-service"
+import { SubscriptionService } from "@/lib/subscription-service"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+
+interface AuthWrapperProps {
+  children: React.ReactNode
+}
+
+export function AuthWrapper({ children }: AuthWrapperProps) {
+  const router = useRouter()
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [hasSubscription, setHasSubscription] = useState(false)
+
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        setIsLoading(true)
+
+        // Check if user is authenticated
+        const session = await AuthService.getSession()
+
+        if (!session) {
+          // Try backup auth
+          const backupAuth = AuthService.getBackupAuthState()
+          if (!backupAuth?.authenticated) {
+            router.push("/auth/login")
+            return
+          }
+        }
+
+        // User is authenticated
+        const userId = session?.user.id
+        setUserId(userId || null)
+
+        if (userId) {
+          // Check if user has an active subscription
+          const { hasActiveSubscription } = await SubscriptionService.getUserSubscriptionWithPlan(userId)
+          setHasSubscription(hasActiveSubscription)
+
+          if (!hasActiveSubscription) {
+            setError("Your subscription is inactive. Please update your subscription to continue.")
+          }
+        }
+      } catch (err) {
+        console.error("Auth check error:", err)
+        setError("Authentication error. Please try logging in again.")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [router])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto max-w-md py-12">
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+
+        <div className="flex gap-4 justify-center">
+          <Button onClick={() => router.push("/auth/login")}>Sign In Again</Button>
+
+          {!hasSubscription && userId && (
+            <Button variant="outline" onClick={() => router.push("/subscription")}>
+              Update Subscription
+            </Button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
